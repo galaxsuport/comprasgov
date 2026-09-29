@@ -343,6 +343,63 @@ body {
   border-color: rgba(226, 82, 125, 0.26);
 }
 
+.webhook-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(3, 8, 18, 0.76);
+  backdrop-filter: blur(5px);
+}
+
+.webhook-popup {
+  width: min(100%, 480px);
+  padding: 1.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 3px solid #e2527d;
+  border-radius: 16px;
+  background: #0e1e37;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.webhook-popup h2 {
+  margin: 0.5rem 0 0.75rem;
+  color: #f4f7fb;
+  font-size: 1.35rem;
+}
+
+.webhook-popup > p:not(.eyebrow) {
+  margin: 0 0 1.5rem;
+  color: #c1d4e3;
+  line-height: 1.6;
+}
+
+.webhook-popup-sample {
+  margin: 0 0 1.5rem;
+}
+
+.webhook-popup-sample h3 {
+  margin: 0 0 0.5rem;
+  color: #99c6ff;
+  font-size: 0.9rem;
+}
+
+.webhook-popup-sample pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 0.85rem;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #dce4ed;
+  font: 0.8rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .table-shell {
   overflow-x: auto;
   margin-top: 1rem;

@@ -2,9 +2,6 @@ import type { PregaoResultado } from './types';
 
 interface FetchFilters {
   ufs?: string;
-  modalidades?: string;
-  dias?: number;
-  prazo?: number;
 }
 
 function formatCurrency(value: unknown) {
@@ -24,20 +21,18 @@ function formatCurrency(value: unknown) {
   });
 }
 
-/* eslint-disable */
-// @ts-ignore
-// Vite environment variables are available via import.meta.env
-const API_BASE_URL: string =
-  window.__ENV__?.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_BASE_URL ||
-  '';
+const API_BASE_URL = '/api/pregoes';
 
-if (!API_BASE_URL) {
-  throw new Error(
-    'VITE_API_BASE_URL não configurado.'
-  );
+export class WebhookPopupError extends Error {
+  constructor(
+    public readonly title: string,
+    message: string,
+    public readonly sample: string | null = null
+  ) {
+    super(message);
+    this.name = 'WebhookPopupError';
+  }
 }
-/* eslint-enable */
 
 function buildApiUrl(filters: FetchFilters = {}): string {
   const baseUrl = API_BASE_URL;
@@ -48,18 +43,6 @@ function buildApiUrl(filters: FetchFilters = {}): string {
   }
   // Quando "todas" é selecionado, não enviamos o parâmetro ufs
   // para que o webhook retorne todas as UFs por padrão
-
-  if (filters.modalidades) {
-    params.set('modalidades', filters.modalidades);
-  }
-
-  if (filters.dias) {
-    params.set('dias', filters.dias.toString());
-  }
-
-  if (filters.prazo) {
-    params.set('prazo', filters.prazo.toString());
-  }
 
   const queryString = params.toString();
   return queryString ? `${baseUrl}?${queryString}` : baseUrl;
@@ -91,6 +74,10 @@ function extractItems(payload: unknown): Record<string, unknown>[] {
 
   if (payload && typeof payload === 'object') {
     const obj = payload as Record<string, unknown>;
+
+    if (typeof obj.tipoSaida === 'string') {
+      return [obj];
+    }
 
     if (Array.isArray(obj.body)) {
       return obj.body as Record<string, unknown>[];
@@ -208,15 +195,11 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
       signal: controller.signal
     });
 
-    console.log('Fetch completed, status:', response.status);
-
     // Sempre tenta ler o JSON, mesmo em respostas de erro
     let payload: unknown;
     try {
       const text = await response.text();
-      console.log('Response text length:', text.length, 'Preview:', text.substring(0, 200));
       payload = text ? JSON.parse(text) : null;
-      console.log('JSON parsed successfully, payload type:', Array.isArray(payload) ? 'array' : typeof payload);
     } catch (parseError) {
       console.error('Erro ao ler/parsear response:', parseError);
       payload = null;
@@ -238,8 +221,17 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
       throw new Error(`Falha ao buscar resultados: ${response.status} ${response.statusText}`);
     }
 
-    const registros = extractItems(payload as Record<string, unknown>);
-    console.log('Registros extraídos:', registros.length);
+    const registros = extractItems(payload);
+    const erroPopup = registros.find((item) => item.tipoSaida === 'erro' && item.popup === true);
+
+    if (erroPopup) {
+      const sample = erroPopup.amostra;
+      throw new WebhookPopupError(
+        toString(erroPopup.titulo) ?? 'Erro na consulta',
+        toString(erroPopup.mensagem) ?? 'O webhook não conseguiu concluir a consulta.',
+        typeof sample === 'string' ? sample : sample == null ? null : JSON.stringify(sample, null, 2)
+      );
+    }
 
     return registros.map(normalizeRecord);
   } catch (error) {

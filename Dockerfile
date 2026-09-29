@@ -25,15 +25,9 @@ COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Template das variáveis de runtime
-RUN cat > /usr/share/nginx/html/env.template.js <<'EOF'
-window.__ENV__ = {
-  VITE_API_BASE_URL: "${VITE_API_BASE_URL}"
-};
-EOF
+COPY frontend/api-proxy.conf.template /etc/nginx/api-proxy.conf.template
 
-# Gera env.js toda vez que o container iniciar
-RUN printf '#!/bin/sh\nset -eu\n\nenvsubst '"'"'${VITE_API_BASE_URL}'"'"' \\\n  < /usr/share/nginx/html/env.template.js \\\n  > /usr/share/nginx/html/env.js\n\necho "Runtime configuration generated."\n' > /docker-entrypoint.d/40-runtime-env.sh
+RUN printf '#!/bin/sh\nset -eu\n\n: "${VITE_API_BASE_URL:?Set VITE_API_BASE_URL in the EasyPanel service environment}"\nmkdir -p /etc/nginx/snippets\nenvsubst '\''${VITE_API_BASE_URL}'\'' < /etc/nginx/api-proxy.conf.template > /etc/nginx/snippets/api-proxy.conf\n' > /docker-entrypoint.d/40-runtime-env.sh
 
 RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh
 
