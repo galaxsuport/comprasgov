@@ -27,10 +27,14 @@ function formatCurrency(value: unknown) {
 /* eslint-disable */
 // @ts-ignore
 // Vite environment variables are available via import.meta.env
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+const API_BASE_URL =
+  window.__ENV__?.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_BASE_URL;
 
 if (!API_BASE_URL) {
-  throw new Error('VITE_API_BASE_URL não configurado. Defina no arquivo .env');
+  throw new Error(
+    'VITE_API_BASE_URL não configurado.'
+  );
 }
 /* eslint-enable */
 
