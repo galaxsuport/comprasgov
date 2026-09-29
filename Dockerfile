@@ -18,6 +18,9 @@ RUN npm run build
 # ================================
 FROM nginx:alpine AS production
 
+# Instala gettext para envsubst
+RUN apk add --no-cache gettext
+
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
@@ -30,16 +33,7 @@ window.__ENV__ = {
 EOF
 
 # Gera env.js toda vez que o container iniciar
-RUN cat > /docker-entrypoint.d/40-runtime-env.sh <<'EOF'
-#!/bin/sh
-set -eu
-
-envsubst '${VITE_API_BASE_URL}' \
-  < /usr/share/nginx/html/env.template.js \
-  > /usr/share/nginx/html/env.js
-
-echo "Runtime configuration generated."
-EOF
+RUN printf '#!/bin/sh\nset -eu\n\nenvsubst '"'"'${VITE_API_BASE_URL}'"'"' \\\n  < /usr/share/nginx/html/env.template.js \\\n  > /usr/share/nginx/html/env.js\n\necho "Runtime configuration generated."\n' > /docker-entrypoint.d/40-runtime-env.sh
 
 RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh
 
