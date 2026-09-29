@@ -17,13 +17,17 @@ npm run dev
 
 ## Configurar endpoint
 
-O endpoint padrão usado é:
+Copie `.env.example` para `.env` e ajuste `VITE_API_BASE_URL` conforme o webhook usado:
 
-`https://n8n.galaxsuport.com.br/webhook/50418344-f875-4854-8dd1-b21de2eeadf5`
+```bash
+cp .env.example .env
+```
+
+O exemplo já aponta para o webhook de produção da GALAX Suport.
 
 O webhook deve permitir a origem `https://comprasgov.galaxsuport.com.br` em `Access-Control-Allow-Origin`.
 
-Se quiser usar outro endpoint, defina em `.env`:
+Para usar outro endpoint, altere o valor em `.env`:
 
 ```env
 VITE_API_BASE_URL=https://seu-endpoint
