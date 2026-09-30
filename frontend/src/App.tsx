@@ -12,6 +12,14 @@ const TODAS_UFS = [
   'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'
 ];
 
+const REGIOES = {
+  Norte: ['AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO'],
+  Nordeste: ['AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE'],
+  'Centro-Oeste': ['DF', 'GO', 'MT', 'MS'],
+  Sudeste: ['ES', 'MG', 'RJ', 'SP'],
+  Sul: ['PR', 'RS', 'SC']
+} as const;
+
 function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFilters) => void }) {
   const [ufs, setUfs] = useState<string[]>([]);
 
@@ -28,8 +36,11 @@ function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFil
     setUfs(prev => prev.includes(uf) ? prev.filter(u => u !== uf) : [...prev, uf]);
   };
 
-  const selectAllUfs = () => {
-    setUfs(prev => prev.length === TODAS_UFS.length ? [] : TODAS_UFS);
+  const toggleRegiao = (regiao: readonly string[]) => {
+    setUfs(prev => regiao.every(uf => prev.includes(uf))
+      ? prev.filter(uf => !regiao.includes(uf))
+      : Array.from(new Set([...prev, ...regiao]))
+    );
   };
 
   return (
@@ -38,22 +49,37 @@ function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFil
         <h3>Filtros</h3>
 
         <div className="filter-group">
-          <label>
-            UFs: <button type="button" className="btn-select-all" onClick={selectAllUfs}>
-              {ufs.length === TODAS_UFS.length ? 'Desmarcar todas' : 'Selecionar todas'}
-            </button>
-          </label>
-          <div className="uf-checkboxes">
-            {TODAS_UFS.map(uf => (
-              <label key={uf} className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={ufs.includes(uf)}
-                  onChange={() => toggleUf(uf)}
-                />
-                <span>{uf}</span>
-              </label>
-            ))}
+          <div className="region-groups">
+            {Object.entries(REGIOES).map(([nome, regiao]) => {
+              const regiaoSelecionada = regiao.every(uf => ufs.includes(uf));
+
+              return (
+                <div key={nome} className="region-group">
+                  <div className="region-heading">
+                    <span>{nome}</span>
+                    <button
+                      type="button"
+                      className="btn-region"
+                      onClick={() => toggleRegiao(regiao)}
+                    >
+                      {regiaoSelecionada ? 'Desmarcar' : 'Selecionar'}
+                    </button>
+                  </div>
+                  <div className="uf-checkboxes">
+                    {regiao.map(uf => (
+                      <label key={uf} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={ufs.includes(uf)}
+                          onChange={() => toggleUf(uf)}
+                        />
+                        <span>{uf}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 

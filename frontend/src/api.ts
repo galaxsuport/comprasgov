@@ -218,7 +218,10 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
     }
 
     if (!response.ok) {
-      throw new Error(`Falha ao buscar resultados: ${response.status} ${response.statusText}`);
+      throw new WebhookPopupError(
+        `Falha ao buscar resultados: ${response.status} ${response.statusText}`,
+        'O webhook não conseguiu concluir a consulta.'
+      );
     }
 
     const registros = extractItems(payload);
