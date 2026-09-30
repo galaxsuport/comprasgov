@@ -194,13 +194,14 @@ function App() {
           }
         }, 2000);
 
-        const data = await fetchResultados(activeFilters, controller.signal);
+        const response = await fetchResultados(activeFilters, controller.signal);
         
         clearInterval(progressInterval);
         setLoadingStep('Finalizando...');
         
         if (!cancelled) {
-          setResultados(data);
+          setResultados(response.resultados);
+          setPopupError(response.aviso);
         }
       } catch (err) {
         if (!cancelled && err instanceof WebhookPopupError) {

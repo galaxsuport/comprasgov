@@ -4,6 +4,11 @@ interface FetchFilters {
   ufs?: string;
 }
 
+export interface FetchResultadosResponse {
+  resultados: PregaoResultado[];
+  aviso: { title: string; message: string; sample: string | null } | null;
+}
+
 function formatCurrency(value: unknown) {
   if (typeof value === 'string') {
     const normalized = value.trim();
@@ -52,7 +57,7 @@ function buildLink(item: Record<string, unknown>) {
   const link = toString(item.linkContratacao ?? item['linkContratacao']);
   if (link) return link;
 
-  const idCompra = item.idCompra ?? item['idCompra'];
+  const idCompra = item.idCompra ?? item['idCompra'] ?? item.numeroControlePNCP;
   if (typeof idCompra === 'number' || typeof idCompra === 'string') {
     return `https://pncp.gov.br/app/editais/${String(idCompra)}`;
   }
@@ -69,7 +74,16 @@ function toString(value: unknown) {
 function extractItems(payload: unknown): Record<string, unknown>[] {
   // Se já é array, retorna direto
   if (Array.isArray(payload)) {
-    return payload as Record<string, unknown>[];
+    return payload.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const page = entry as Record<string, unknown>;
+      if (Array.isArray(page.registros)) {
+        return page.registros.filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === 'object')
+        );
+      }
+      return [page];
+    });
   }
 
   if (payload && typeof payload === 'object') {
@@ -77,6 +91,10 @@ function extractItems(payload: unknown): Record<string, unknown>[] {
 
     if (typeof obj.tipoSaida === 'string') {
       return [obj];
+    }
+
+    if (Array.isArray(obj.registros)) {
+      return obj.registros as Record<string, unknown>[];
     }
 
     if (Array.isArray(obj.body)) {
@@ -107,6 +125,35 @@ function extractItems(payload: unknown): Record<string, unknown>[] {
   return [];
 }
 
+function extractWarning(payload: unknown, registros: Record<string, unknown>[]) {
+  const pages = Array.isArray(payload) ? payload : [payload];
+  const pageWarning = pages
+    .filter((page): page is Record<string, unknown> => Boolean(page && typeof page === 'object'))
+    .map((page) => page.popupErro)
+    .find((popup) => popup && typeof popup === 'object' && (popup as Record<string, unknown>).exibir === true) as Record<string, unknown> | undefined;
+
+  const legacyWarning = registros.find((item) => item.tipoSaida === 'erro' && item.popup === true);
+  const warning = pageWarning ?? legacyWarning;
+  if (!warning) return null;
+
+  const sampleValue = warning.amostra ?? warning.detalhe;
+  const sample = typeof sampleValue === 'string'
+    ? sampleValue
+    : sampleValue == null ? null : JSON.stringify(sampleValue, null, 2);
+  const warningText = [warning.titulo, warning.mensagem, sample].filter(Boolean).join(' ');
+  const limiteExcedido = /limite.{0,40}requisi|requisi.{0,40}limite/i.test(warningText);
+
+  return {
+    title: limiteExcedido
+      ? 'Limite de requisições excedido no PNCP'
+      : toString(warning.titulo) ?? 'Erro na consulta',
+    message: limiteExcedido
+      ? 'O PNCP interrompeu parte da consulta por limite de requisições. Os resultados recebidos antes da interrupção continuam disponíveis.'
+      : toString(warning.mensagem) ?? 'O webhook não conseguiu concluir a consulta.',
+    sample
+  };
+}
+
 function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
   const tipoSaida = toString(item.tipoSaida ?? item['tipoSaida']);
   
@@ -132,24 +179,32 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
 
   // Caso contrário, retorna estrutura de oportunidade
   const diagGeral = item.diagnosticoGeral as Record<string, unknown> | undefined;
+  const orgaoEntidade = item.orgaoEntidade && typeof item.orgaoEntidade === 'object'
+    ? item.orgaoEntidade as Record<string, unknown>
+    : {};
+  const unidadeOrgao = item.unidadeOrgao && typeof item.unidadeOrgao === 'object'
+    ? item.unidadeOrgao as Record<string, unknown>
+    : {};
+  const uf = toString(item.uf ?? item.ufConsulta ?? unidadeOrgao.ufSigla);
+  const municipio = toString(item.municipio ?? unidadeOrgao.municipioNome);
   return {
     tipoSaida: 'oportunidade',
-    score: typeof item.score === 'number' ? item.score : 0,
-    uf: toString(item.uf ?? item['uf'] ?? item.unidadeOrgaoUfSigla ?? item['unidadeOrgaoUfSigla']),
-    municipio: toString(item.municipio ?? item['municipio'] ?? item.unidadeOrgaoMunicipioNome ?? item['unidadeOrgaoMunicipioNome']),
-    local: toString(item.local ?? item['local'] ?? [item.municipio, item.uf].filter(Boolean).join('/')),
-    orgao: toString(item.orgao ?? item['orgao'] ?? item.orgaoEntidadeRazaoSocial ?? item['orgaoEntidadeRazaoSocial'] ?? item.unidadeOrgaoNomeUnidade ?? item['unidadeOrgaoNomeUnidade']),
-    unidadeCompradora: toString(item.unidadeCompradora ?? item['unidadeCompradora'] ?? item.unidadeOrgaoNomeUnidade ?? item['unidadeOrgaoNomeUnidade']),
-    codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : null,
-    modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : null,
-    modalidade: toString(item.modalidade ?? item['modalidade'] ?? item.modalidadeContratacao ?? item['modalidadeContratacao'] ?? item.modalidadeNome ?? item['modalidadeNome']),
-    valorNumerico: typeof item.valorNumerico === 'number' ? item.valorNumerico : null,
+    score: typeof item.score === 'number' ? item.score : typeof item.scoreRelevancia === 'number' ? item.scoreRelevancia : 0,
+    uf,
+    municipio,
+    local: toString(item.local) ?? [municipio, uf].filter(Boolean).join('/'),
+    orgao: toString(item.orgao ?? orgaoEntidade.razaoSocial ?? unidadeOrgao.nomeUnidade),
+    unidadeCompradora: toString(item.unidadeCompradora ?? unidadeOrgao.nomeUnidade),
+    codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : typeof item.codigoModalidadeConsulta === 'number' ? item.codigoModalidadeConsulta : null,
+    modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : typeof item.modalidadeId === 'number' ? item.modalidadeId : null,
+    modalidade: toString(item.modalidade ?? item.modalidadeConsulta ?? item.modalidadeContratacao ?? item.modalidadeNome),
+    valorNumerico: typeof item.valorNumerico === 'number' ? item.valorNumerico : typeof item.valorTotalEstimado === 'number' ? item.valorTotalEstimado : null,
     valor: formatCurrency(item.valor ?? item['valor'] ?? item.valorTotalEstimado ?? item['valorTotalEstimado']),
-    modoDisputa: toString(item.modoDisputa ?? item['modoDisputa'] ?? item.modoDisputaNomePncp ?? item['modoDisputaNomePncp']),
-    registroPreco: item.registroPreco === true ? true : item.registroPreco === false ? false : null,
-    situacao: toString(item.situacao ?? item['situacao'] ?? item.situacaoCompraNomePncp ?? item['situacaoCompraNomePncp']),
+    modoDisputa: toString(item.modoDisputa ?? item.modoDisputaNome ?? item.modoDisputaNomePncp),
+    registroPreco: typeof item.registroPreco === 'boolean' ? item.registroPreco : typeof item.srp === 'boolean' ? item.srp : null,
+    situacao: toString(item.situacao ?? item.situacaoCompraNome ?? item.situacaoCompraNomePncp),
     objeto: toString(item.objeto ?? item['objeto'] ?? item.objetoCompra ?? item['objetoCompra']),
-    dataPublicacao: toString(item.dataPublicacao ?? item['dataPublicacao']),
+    dataPublicacao: toString(item.dataPublicacao ?? item.dataPublicacaoPncp),
     dataAberturaProposta: toString(item.dataAberturaProposta ?? item['dataAberturaProposta'] ?? item.dataInicioRecebimentoPropostas ?? item['dataInicioRecebimentoPropostas']),
     dataEncerramentoProposta: toString(item.dataEncerramentoProposta ?? item['dataEncerramentoProposta'] ?? item.dataFimRecebimentoPropostas ?? item['dataFimRecebimentoPropostas'] ?? item.dataEncerramentoPropostaPncp ?? item['dataEncerramentoPropostaPncp']),
     diasRestantes: typeof item.diasRestantes === 'number' ? item.diasRestantes : null,
@@ -172,7 +227,7 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
   } as PregaoResultado;
 }
 
-export async function fetchResultados(filters?: FetchFilters, externalSignal?: AbortSignal): Promise<PregaoResultado[]> {
+export async function fetchResultados(filters?: FetchFilters, externalSignal?: AbortSignal): Promise<FetchResultadosResponse> {
   const url = buildApiUrl(filters);
   
   // Combina signal externo (do React) com timeout interno de 150s (2:30min)
@@ -205,8 +260,11 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
       payload = null;
     }
 
+    const registros = extractItems(payload);
+    const possuiResultados = registros.some((item) => item.tipoSaida !== 'erro');
+
     // Tratar erro específico do webhook: limite de requisições excedido
-    if (payload && typeof payload === 'object' && 'erro' in payload) {
+    if (!possuiResultados && payload && typeof payload === 'object' && 'erro' in payload) {
       const erro = (payload as Record<string, unknown>).erro;
       if (erro === 'LIMITE_REQUISICOES_EXCEDIDO') {
         throw new Error('LIMITE_REQUISICOES_EXCEDIDO: Número máximo de requisições atingido. Aguarde alguns minutos e tente novamente.');
@@ -224,19 +282,12 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
       );
     }
 
-    const registros = extractItems(payload);
-    const erroPopup = registros.find((item) => item.tipoSaida === 'erro' && item.popup === true);
+    const aviso = extractWarning(payload, registros);
+    const resultados = registros
+      .filter((item) => item.tipoSaida !== 'erro')
+      .map(normalizeRecord);
 
-    if (erroPopup) {
-      const sample = erroPopup.amostra;
-      throw new WebhookPopupError(
-        toString(erroPopup.titulo) ?? 'Erro na consulta',
-        toString(erroPopup.mensagem) ?? 'O webhook não conseguiu concluir a consulta.',
-        typeof sample === 'string' ? sample : sample == null ? null : JSON.stringify(sample, null, 2)
-      );
-    }
-
-    return registros.map(normalizeRecord);
+    return { resultados, aviso };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('Tempo limite excedido (150s) ao buscar resultados');
