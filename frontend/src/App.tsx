@@ -13,9 +13,11 @@ const TODAS_UFS = [
 ];
 
 function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFilters) => void }) {
-  const [ufs, setUfs] = useState<string[]>(['RJ']);
+  const [ufs, setUfs] = useState<string[]>([]);
 
   const handleApplyFilters = () => {
+    if (ufs.length === 0) return;
+
     const filters: FetchFilters = {
       ufs: ufs.join(','),
     };
@@ -27,7 +29,7 @@ function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFil
   };
 
   const selectAllUfs = () => {
-    setUfs(prev => prev.length === TODAS_UFS.length ? ['RJ'] : TODAS_UFS);
+    setUfs(prev => prev.length === TODAS_UFS.length ? [] : TODAS_UFS);
   };
 
   return (
@@ -132,9 +134,12 @@ function App() {
   const [loadingStep, setLoadingStep] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<{ title: string; message: string; sample: string | null } | null>(null);
-  const [filters, setFilters] = useState<FetchFilters>({});
+  const [filters, setFilters] = useState<FetchFilters | null>(null);
 
   useEffect(() => {
+    if (!filters?.ufs) return;
+    const activeFilters = filters;
+
     const controller = new AbortController();
     let cancelled = false;
 
@@ -163,7 +168,7 @@ function App() {
           }
         }, 2000);
 
-        const data = await fetchResultados(filters, controller.signal);
+        const data = await fetchResultados(activeFilters, controller.signal);
         
         clearInterval(progressInterval);
         setLoadingStep('Finalizando...');
