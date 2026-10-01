@@ -140,7 +140,7 @@ function extractWarning(payload: unknown, registros: Record<string, unknown>[]) 
   const sample = typeof sampleValue === 'string'
     ? sampleValue
     : sampleValue == null ? null : JSON.stringify(sampleValue, null, 2);
-  const warningText = [warning.titulo, warning.mensagem, sample].filter(Boolean).join(' ');
+  const warningText = [warning.titulo, warning.mensagem].filter(Boolean).join(' ');
   const limiteExcedido = /limite.{0,40}requisi|requisi.{0,40}limite/i.test(warningText);
 
   return {

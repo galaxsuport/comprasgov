@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:homolog": "vite --mode homolog",
+    "dev:production": "vite --mode production",
     "build": "tsc && vite build",
+    "build:homolog": "tsc && vite build --mode homolog",
+    "build:production": "tsc && vite build --mode production",
     "preview": "vite preview"
   },
   "dependencies": {
