@@ -53,16 +53,6 @@ export default function ResultCard({ result }: ResultCardProps) {
           </div>
         </div>
 
-        {result.linkContratacao ? (
-          <a 
-            className="action-link" 
-            href={result.linkContratacao} 
-            target="_blank" 
-            rel="noreferrer"
-          >
-            Ver no PNCP
-          </a>
-        ) : null}
       </div>
 
       <div className="card-grid">
@@ -125,6 +115,17 @@ export default function ResultCard({ result }: ResultCardProps) {
         <p className="section-label">Objeto da contratação</p>
         <p className="object-text">{result.objeto ?? 'Descrição não disponível'}</p>
       </div>
+
+      {result.linkContratacao ? (
+        <a
+          className="action-link"
+          href={result.linkContratacao}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Ver no PNCP
+        </a>
+      ) : null}
     </article>
   );
 }
