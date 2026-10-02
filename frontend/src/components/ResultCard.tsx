@@ -12,6 +12,20 @@ function isResumo(result: PregaoResultado): result is ResumoResultado {
   return result.tipoSaida === 'resumo';
 }
 
+function formatTempoRestante(dataEncerramento: string | null): string {
+  if (!dataEncerramento) return '—';
+
+  const encerramento = new Date(dataEncerramento).getTime();
+  if (Number.isNaN(encerramento)) return '—';
+
+  const minutosRestantes = Math.max(0, Math.floor((encerramento - Date.now()) / 60000));
+  const dias = Math.floor(minutosRestantes / 1440);
+  const horas = Math.floor((minutosRestantes % 1440) / 60);
+  const minutos = minutosRestantes % 60;
+
+  return `${dias} ${dias === 1 ? 'dia' : 'dias'}, ${horas} ${horas === 1 ? 'hora' : 'horas'} e ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'} restantes`;
+}
+
 export default function ResultCard({ result }: ResultCardProps) {
   // Se for resumo, mostra apenas o diagnóstico
   if (isResumo(result)) {
@@ -93,8 +107,8 @@ export default function ResultCard({ result }: ResultCardProps) {
           <strong>{result.situacao ?? '—'}</strong>
         </div>
         <div>
-          <span>Dias restantes</span>
-          <strong>{result.diasRestantes !== null ? result.diasRestantes : '—'}</strong>
+          <span>Tempo restante</span>
+          <strong>{formatTempoRestante(result.dataEncerramentoProposta)}</strong>
         </div>
       </div>
 
