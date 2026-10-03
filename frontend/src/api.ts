@@ -187,6 +187,28 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     : {};
   const uf = toString(item.uf ?? item.ufConsulta ?? unidadeOrgao.ufSigla);
   const municipio = toString(item.municipio ?? unidadeOrgao.municipioNome);
+  const codigoUnidade = toString(
+    unidadeOrgao.codigoUnidade
+      ?? unidadeOrgao.codigoUasg
+      ?? unidadeOrgao.codigoUASG
+      ?? unidadeOrgao.codUasg
+      ?? unidadeOrgao.uasg
+      ?? item.codigoUnidade
+      ?? item.codigoUasg
+      ?? item.codigoUASG
+      ?? item.codUasg
+      ?? item.uasg
+  );
+  const nomeUnidade = toString(item.unidadeCompradora ?? unidadeOrgao.nomeUnidade);
+  const ufUnidade = toString(unidadeOrgao.ufSigla ?? item.uf ?? item.ufConsulta);
+  const unidadeSemUf = nomeUnidade
+    ? codigoUnidade && !nomeUnidade.startsWith(`${codigoUnidade} - `)
+      ? `${codigoUnidade} - ${nomeUnidade}`
+      : nomeUnidade
+    : null;
+  const unidadeCompradora = unidadeSemUf && ufUnidade && !unidadeSemUf.endsWith(`/${ufUnidade}`)
+    ? `${unidadeSemUf}/${ufUnidade}`
+    : unidadeSemUf;
   return {
     tipoSaida: 'oportunidade',
     score: typeof item.score === 'number' ? item.score : typeof item.scoreRelevancia === 'number' ? item.scoreRelevancia : 0,
@@ -194,7 +216,7 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     municipio,
     local: toString(item.local) ?? [municipio, uf].filter(Boolean).join('/'),
     orgao: toString(item.orgao ?? orgaoEntidade.razaoSocial ?? unidadeOrgao.nomeUnidade),
-    unidadeCompradora: toString(item.unidadeCompradora ?? unidadeOrgao.nomeUnidade),
+    unidadeCompradora,
     codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : typeof item.codigoModalidadeConsulta === 'number' ? item.codigoModalidadeConsulta : null,
     modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : typeof item.modalidadeId === 'number' ? item.modalidadeId : null,
     modalidade: toString(item.modalidade ?? item.modalidadeConsulta ?? item.modalidadeContratacao ?? item.modalidadeNome),

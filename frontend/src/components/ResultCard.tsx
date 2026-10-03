@@ -2,6 +2,8 @@ import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '..
 
 interface ResultCardProps {
   result: PregaoResultado;
+  isFavorite?: boolean;
+  onToggleFavorite?: (result: OportunidadeResultado) => void;
 }
 
 function isOportunidade(result: PregaoResultado): result is OportunidadeResultado {
@@ -26,7 +28,7 @@ function formatTempoRestante(dataEncerramento: string | null): string {
   return `${dias} ${dias === 1 ? 'dia' : 'dias'}, ${horas} ${horas === 1 ? 'hora' : 'horas'} e ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'} restantes`;
 }
 
-export default function ResultCard({ result }: ResultCardProps) {
+export default function ResultCard({ result, isFavorite = false, onToggleFavorite }: ResultCardProps) {
   // Se for resumo, mostra apenas o diagnóstico
   if (isResumo(result)) {
     return (
@@ -52,21 +54,35 @@ export default function ResultCard({ result }: ResultCardProps) {
     );
   }
 
+  const unidadeCompradora = result.unidadeCompradora;
+
   // Renderização para oportunidade
   return (
     <article className="card">
-      <div className="card-header">
+      <div className="card-header card-opportunity-header">
         <div>
           <p className="eyebrow">{result.fonte ?? 'Fonte desconhecida'}</p>
           <h2>{result.local ?? 'Local não informado'}</h2>
-          <p className="subline">{result.orgao ?? 'Órgão não informado'}</p>
+          {unidadeCompradora ? (
+            <p className="subline">{unidadeCompradora}</p>
+          ) : null}
           <div className="card-badges">
             {result.modalidade ? <span className="badge">{result.modalidade}</span> : null}
-            {result.registroPreco ? <span className="badge">{result.registroPreco ? 'Sim' : 'Não'}</span> : null}
+            {result.registroPreco === true ? <span className="badge badge-srp">SRP</span> : null}
             {result.modoDisputa ? <span className="badge">{result.modoDisputa}</span> : null}
           </div>
         </div>
-
+        <button
+          type="button"
+          className="favorite-card-toggle"
+          onClick={() => onToggleFavorite?.(result)}
+          aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+          aria-pressed={isFavorite}
+          title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+          disabled={!result.idContratacaoPNCP && !result.linkContratacao}
+        >
+          <span aria-hidden="true">{isFavorite ? '★' : '☆'}</span>
+        </button>
       </div>
 
       <div className="card-grid">
@@ -113,8 +129,6 @@ export default function ResultCard({ result }: ResultCardProps) {
       </div>
 
       <div className="card-meta">
-        {result.idContratacaoPNCP ? <span className="id-badge">{result.idContratacaoPNCP}</span> : null}
-        {result.local && result.unidadeCompradora ? <span className="chip">{result.unidadeCompradora}</span> : null}
         {result.palavrasChaveEncontradas && result.palavrasChaveEncontradas.length > 0 && (
           <div className="keywords">
             <span className="keywords-label">Palavras-chave:</span>
