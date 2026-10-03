@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
 interface ResultCardProps {
@@ -29,6 +30,35 @@ function formatTempoRestante(dataEncerramento: string | null): string {
 }
 
 export default function ResultCard({ result, isFavorite = false, onToggleFavorite }: ResultCardProps) {
+  const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
+
+  useEffect(() => {
+    if (!proposalLinkCopied) return;
+    const timeoutId = window.setTimeout(() => setProposalLinkCopied(false), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [proposalLinkCopied]);
+
+  const copyProposalLink = async () => {
+    if (result.tipoSaida !== 'oportunidade' || !result.cadastroProposta) return;
+
+    try {
+      await navigator.clipboard.writeText(result.cadastroProposta);
+    } catch {
+      const textArea = document.createElement('textarea');
+      textArea.value = result.cadastroProposta;
+      textArea.setAttribute('readonly', '');
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand('copy');
+      textArea.remove();
+      if (!copied) return;
+    }
+
+    setProposalLinkCopied(true);
+  };
+
   // Se for resumo, mostra apenas o diagnóstico
   if (isResumo(result)) {
     return (
@@ -171,14 +201,15 @@ export default function ResultCard({ result, isFavorite = false, onToggleFavorit
           </a>
         ) : null}
         {result.cadastroProposta ? (
-          <a
+          <button
+            type="button"
             className="action-link"
-            href={result.cadastroProposta}
-            target="_blank"
-            rel="noreferrer"
+            onClick={copyProposalLink}
+            aria-label={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
+            title={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
           >
-            Cadastrar Proposta
-          </a>
+            {proposalLinkCopied ? 'Copiado' : 'Link da proposta'}
+          </button>
         ) : null}
       </div>
     </article>

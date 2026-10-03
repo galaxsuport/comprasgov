@@ -722,12 +722,16 @@ body {
   align-self: center;
   min-width: 120px;
   padding: 0.9rem 1.1rem;
+  border: 0;
   color: #fff;
   text-decoration: none;
   border-radius: 999px;
   background: linear-gradient(135deg, #57c8d9, #6c8dff);
+  font-family: inherit;
   font-size: 0.92rem;
   font-weight: 600;
+  text-align: center;
+  cursor: pointer;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 
