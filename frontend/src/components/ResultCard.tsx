@@ -55,13 +55,28 @@ export default function ResultCard({ result, isFavorite = false, onToggleFavorit
   }
 
   const unidadeCompradora = result.unidadeCompradora;
+  const scorePercent = Number.isFinite(result.score)
+    ? Math.min(100, Math.max(0, result.score))
+    : 0;
 
   // Renderização para oportunidade
   return (
     <article className="card">
       <div className="card-header card-opportunity-header">
         <div>
-          <p className="eyebrow">{result.fonte ?? 'Fonte desconhecida'}</p>
+          <div className="score-meter-block">
+            <div
+              className="score-meter-track"
+              role="progressbar"
+              aria-label="Score de relevância"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(scorePercent)}
+            >
+              <span className="score-meter-fill" style={{ width: `${scorePercent}%` }} />
+              <span className="score-meter-value">Score {Math.round(scorePercent)}%</span>
+            </div>
+          </div>
           <h2>{result.local ?? 'Local não informado'}</h2>
           {unidadeCompradora ? (
             <p className="subline">{unidadeCompradora}</p>
@@ -144,16 +159,28 @@ export default function ResultCard({ result, isFavorite = false, onToggleFavorit
         <p className="object-text">{result.objeto ?? 'Descrição não disponível'}</p>
       </div>
 
-      {result.linkContratacao ? (
-        <a
-          className="action-link"
-          href={result.linkContratacao}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Ver no PNCP
-        </a>
-      ) : null}
+      <div className="card-actions">
+        {result.linkContratacao ? (
+          <a
+            className="action-link"
+            href={result.linkContratacao}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Ver no PNCP
+          </a>
+        ) : null}
+        {result.cadastroProposta ? (
+          <a
+            className="action-link"
+            href={result.cadastroProposta}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Cadastrar Proposta
+          </a>
+        ) : null}
+      </div>
     </article>
   );
 }

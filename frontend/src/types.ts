@@ -41,6 +41,7 @@ export interface OportunidadeResultado {
   idContratacaoPNCP: string | null;
   fonte: string | null;
   linkContratacao: string | null;
+  cadastroProposta: string | null;
   linkSistemaOrigem: string | null;
   diagnosticoGeral: DiagnosticoGeral;
 }

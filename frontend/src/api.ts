@@ -234,6 +234,7 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     idContratacaoPNCP: toString(item.idContratacaoPNCP ?? item['idContratacaoPNCP'] ?? item.numeroControlePNCP ?? item['numeroControlePNCP']),
     fonte: toString(item.fonte ?? item['fonte']) ?? 'PNCP',
     linkContratacao: buildLink(item),
+    cadastroProposta: toString(item.cadastroProposta ?? item['cadastroProposta']),
     linkSistemaOrigem: toString(item.linkSistemaOrigem ?? item['linkSistemaOrigem']),
     diagnosticoGeral: diagGeral ? {
       paginas: typeof diagGeral.paginas === 'number' ? diagGeral.paginas : 0,

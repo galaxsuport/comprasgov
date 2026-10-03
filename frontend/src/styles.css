@@ -611,6 +611,40 @@ body {
   line-height: 1.2;
 }
 
+.score-meter-block {
+  display: grid;
+  gap: 0.35rem;
+  width: min(100%, 280px);
+}
+
+.score-meter-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.score-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #55c4c9, #7fd6db);
+}
+
+.score-meter-value {
+  position: relative;
+  z-index: 1;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
 .favorite-card-toggle {
   display: grid;
   width: 44px;
@@ -674,6 +708,13 @@ body {
 .badge-srp {
   background: rgba(180, 35, 24, 0.5);
   color: #fff;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .action-link {
