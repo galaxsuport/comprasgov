@@ -1,7 +1,9 @@
 import type { PregaoResultado } from './types';
+import type { OportunidadeResultado } from './types';
 
 interface FetchFilters {
   ufs?: string;
+  uasg?: string;
 }
 
 export interface FetchResultadosResponse {
@@ -27,6 +29,124 @@ function formatCurrency(value: unknown) {
 }
 
 const API_BASE_URL = '/api/pregoes';
+const AUTH_API_BASE_URL = '/api/auth';
+
+async function readApiError(response: Response): Promise<string> {
+  try {
+    const body = await response.json() as { error?: string };
+    if (body.error) return body.error;
+  } catch {
+    // Non-JSON responses still report their HTTP status below.
+  }
+  return `Falha na comunicação com o servidor (HTTP ${response.status}).`;
+}
+
+export async function fetchDeadline(): Promise<number> {
+  const response = await fetch('/api/settings/deadline');
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { value: number }).value;
+}
+
+export async function saveDeadline(value: number): Promise<number> {
+  const response = await fetch('/api/settings/deadline', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { value: number }).value;
+}
+
+export type TextKind = 'company-name' | 'title' | 'subtitle';
+
+export async function fetchText(kind: TextKind): Promise<string> {
+  const response = await fetch(`/api/settings/${kind}`);
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { value: string }).value;
+}
+
+export async function saveText(kind: TextKind, value: string): Promise<string> {
+  const response = await fetch(`/api/settings/${kind}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { value: string }).value;
+}
+
+export type TermKind = 'strong-terms' | 'contextual-terms' | 'technological-contexts' | 'exclusion-terms';
+
+export async function fetchTerms(kind: TermKind): Promise<string[]> {
+  const response = await fetch(`/api/settings/${kind}`);
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { terms: string[] }).terms;
+}
+
+export async function saveTerms(kind: TermKind, terms: string[]): Promise<string[]> {
+  const response = await fetch(`/api/settings/${kind}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terms })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return ((await response.json()) as { terms: string[] }).terms;
+}
+
+export async function fetchFavorites(): Promise<OportunidadeResultado[]> {
+  const response = await fetch('/api/favorites');
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<OportunidadeResultado[]>;
+}
+
+export async function addFavorite(favorite: OportunidadeResultado): Promise<OportunidadeResultado> {
+  const response = await fetch('/api/favorites', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ favorite })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<OportunidadeResultado>;
+}
+
+export async function removeFavorite(key: string): Promise<void> {
+  const response = await fetch(`/api/favorites/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function fetchDiscarded(): Promise<OportunidadeResultado[]> {
+  const response = await fetch('/api/discarded');
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<OportunidadeResultado[]>;
+}
+
+export async function discardProposal(proposal: OportunidadeResultado): Promise<void> {
+  const response = await fetch('/api/discarded', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposal })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function restoreProposal(key: string): Promise<void> {
+  const response = await fetch(`/api/discarded/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch(`${AUTH_API_BASE_URL}/logout`, { method: 'POST' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const response = await fetch(`${AUTH_API_BASE_URL}/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
 
 export class WebhookPopupError extends Error {
   constructor(
@@ -43,7 +163,9 @@ function buildApiUrl(filters: FetchFilters = {}): string {
   const baseUrl = API_BASE_URL;
   const params = new URLSearchParams();
 
-  if (filters.ufs && filters.ufs !== 'todas') {
+  if (filters.uasg) {
+    params.set('uasg', filters.uasg);
+  } else if (filters.ufs && filters.ufs !== 'todas') {
     params.set('ufs', filters.ufs);
   }
   // Quando "todas" é selecionado, não enviamos o parâmetro ufs

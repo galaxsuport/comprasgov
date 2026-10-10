@@ -5,6 +5,8 @@ interface ResultCardProps {
   result: PregaoResultado;
   isFavorite?: boolean;
   onToggleFavorite?: (result: OportunidadeResultado) => void;
+  isDiscarded?: boolean;
+  onToggleDiscard?: (result: OportunidadeResultado) => void;
 }
 
 function isOportunidade(result: PregaoResultado): result is OportunidadeResultado {
@@ -29,7 +31,13 @@ function formatTempoRestante(dataEncerramento: string | null): string {
   return `${dias} ${dias === 1 ? 'dia' : 'dias'}, ${horas} ${horas === 1 ? 'hora' : 'horas'} e ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'} restantes`;
 }
 
-export default function ResultCard({ result, isFavorite = false, onToggleFavorite }: ResultCardProps) {
+export default function ResultCard({
+  result,
+  isFavorite = false,
+  onToggleFavorite,
+  isDiscarded = false,
+  onToggleDiscard
+}: ResultCardProps) {
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
 
   useEffect(() => {
@@ -91,7 +99,8 @@ export default function ResultCard({ result, isFavorite = false, onToggleFavorit
 
   // Renderização para oportunidade
   return (
-    <article className="card">
+    <article className={`card${isDiscarded ? ' card-discarded' : ''}`}>
+      <div className="card-content" {...(isDiscarded ? ({ inert: '' } as object) : {})} aria-hidden={isDiscarded || undefined}>
       <div className="card-header card-opportunity-header">
         <div>
           <div className="score-meter-block">
@@ -211,6 +220,34 @@ export default function ResultCard({ result, isFavorite = false, onToggleFavorit
             {proposalLinkCopied ? 'Copiado' : 'Link da proposta'}
           </button>
         ) : null}
+      </div>
+      </div>
+
+      <div className="card-discard-row">
+        <button
+          type="button"
+          className="discard-toggle"
+          onClick={() => onToggleDiscard?.(result)}
+          disabled={!result.idContratacaoPNCP && !result.linkContratacao}
+          title={isDiscarded ? 'Desfazer descartar' : 'Descartar proposta'}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {isDiscarded ? (
+              <>
+                <path d="M3 7v6h6" />
+                <path d="M21 17a9 9 0 0 0-15-6.7L3 13" />
+              </>
+            ) : (
+              <>
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v6M14 11v6" />
+              </>
+            )}
+          </svg>
+          <span>{isDiscarded ? 'Desfazer descartar' : 'Descartar'}</span>
+        </button>
       </div>
     </article>
   );

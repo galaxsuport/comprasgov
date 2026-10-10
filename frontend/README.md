@@ -1,4 +1,4 @@
-# Site Reactivo de Pregões TIC
+# Contratações TIC
 
 Este projeto exibe os resultados do endpoint n8n diretamente em uma interface moderna.
 
@@ -7,29 +7,35 @@ Este projeto exibe os resultados do endpoint n8n diretamente em uma interface mo
 ```bash
 cd frontend
 npm install
+cd ../server
+npm install
 ```
 
 ## Executar localmente
 
-Crie um arquivo `.env.homolog.local` ou `.env.production.local` conforme o ambiente:
+Configure `frontend/.env` com as credenciais do usuário e o endpoint de consulta:
 
 ```env
+AUTH_USERNAME=seu-usuario
+AUTH_PASSWORD=sua-senha
 VITE_API_BASE_URL=https://seu-webhook-do-ambiente
 ```
 
-Esses arquivos locais são ignorados pelo Git. Use os comandos correspondentes para iniciar ou gerar a versão desejada:
+O arquivo `.env` é ignorado pelo Git. Inicie a aplicação pela pasta `frontend`; o comando inicia a API e a interface:
 
 ```bash
-npm run dev:homolog
-npm run dev:production
-npm run build:homolog
-npm run build:production
+cd ../frontend
+npm run dev
 ```
 
 ## Configurar endpoint
 
-Para homologação local, configure `VITE_API_BASE_URL` em `.env.homolog.local` e inicie com `npm run dev:homolog`.
+Para homologação local, configure `VITE_API_BASE_URL` em `.env.homolog.local`. No EasyPanel, configure `VITE_API_BASE_URL`, `AUTH_USERNAME` e `AUTH_PASSWORD` como variáveis do serviço.
 
-No EasyPanel, configure somente o serviço de produção com `VITE_API_BASE_URL` apontando para o webhook de produção. O container configura o proxy do Nginx ao iniciar.
+O container agora executa a API e serve a interface. Monte um volume persistente no caminho `/data` para que o banco SQLite de favoritos sobreviva a reinícios e atualizações.
 
-O webhook deve permitir a origem pública da aplicação em `Access-Control-Allow-Origin`.
+No desenvolvimento, o banco fica em `server/data/comprasgov.sqlite`. O login é validado no servidor e a sessão usa um cookie `HttpOnly`. Os favoritos ficam associados à conta autenticada e são compartilhados entre dispositivos. `AUTH_PASSWORD` deve ser configurada apenas no `.env` local ignorado pelo Git ou no ambiente do servidor; não use o prefixo `VITE_` para credenciais.
+
+A senha pode ser alterada em Configurações. A nova senha é guardada com hash no SQLite (não no `.env`) e passa a prevalecer sobre `AUTH_PASSWORD`; as demais sessões são encerradas. Para voltar à senha do ambiente, apague a linha correspondente da tabela `credentials`.
+
+Em cada consulta a `/api/pregoes`, o servidor anexa ao webhook as configurações da conta autenticada: `prazo` (dias, 1 a 15; padrão `DEADLINE_DEFAULT_DAYS`) e `termosFortes`, `termosContextuais`, `contextosTecnologicos` e `termosExclusao` (listas separadas por vírgula). Esses valores prevalecem sobre os enviados pelo navegador.

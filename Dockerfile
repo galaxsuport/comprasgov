@@ -1,36 +1,47 @@
 # ================================
 # Build stage
 # ================================
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
 RUN npm ci
 
-COPY frontend/. .
+COPY frontend/index.html ./
+COPY frontend/vite.config.ts ./
+COPY frontend/tsconfig*.json ./
+COPY frontend/src ./src
 
 RUN npm run build
+
+
+FROM node:22-alpine AS api-dependencies
+
+WORKDIR /app/server
+
+RUN apk add --no-cache python3 make g++
+COPY server/package*.json ./
+RUN npm ci --omit=dev
 
 
 # ================================
 # Production stage
 # ================================
-FROM nginx:alpine AS production
+FROM node:22-alpine AS production
 
-# Instala gettext para envsubst
-RUN apk add --no-cache gettext
+ENV NODE_ENV=production
+ENV PORT=80
+ENV DATA_DIR=/data
 
-COPY --from=builder /app/frontend/dist /usr/share/nginx/html
+WORKDIR /app
 
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache libstdc++
+COPY server/index.js server/app.js ./server/
+COPY --from=api-dependencies /app/server/node_modules ./server/node_modules
+COPY --from=builder /app/frontend/dist ./frontend/dist
 
-COPY frontend/api-proxy.conf.template /etc/nginx/api-proxy.conf.template
-
-RUN printf '#!/bin/sh\nset -eu\n\n: "${VITE_API_BASE_URL:?Set VITE_API_BASE_URL in the EasyPanel service environment}"\nmkdir -p /etc/nginx/snippets\nenvsubst '\''${VITE_API_BASE_URL}'\'' < /etc/nginx/api-proxy.conf.template > /etc/nginx/snippets/api-proxy.conf\n' > /docker-entrypoint.d/40-runtime-env.sh
-
-RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh
-
+VOLUME ["/data"]
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server/index.js"]
