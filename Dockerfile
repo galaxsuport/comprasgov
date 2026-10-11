@@ -37,7 +37,7 @@ ENV DATA_DIR=/data
 WORKDIR /app
 
 RUN apk add --no-cache libstdc++
-COPY server/index.js server/app.js ./server/
+COPY server/index.js server/app.js server/default-terms.js ./server/
 COPY --from=api-dependencies /app/server/node_modules ./server/node_modules
 COPY --from=builder /app/frontend/dist ./frontend/dist
 
