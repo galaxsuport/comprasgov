@@ -419,3 +419,99 @@ test('stores discarded proposals per user and restores them', async () => {
     isolatedDb.close();
   }
 });
+
+test('runs an analysis job, tracks its status and stores the report', async () => {
+  let state = 'fila';
+  const seen = [];
+  const n8n = createWebhookServer((request, response) => {
+    let body = '';
+    request.on('data', chunk => (body += chunk));
+    request.on('end', () => {
+      seen.push({ method: request.method, url: request.url, key: request.headers['x-workflow-key'], body });
+      if (request.url === '/webhook/start') {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({
+          job_id: 'job1', status: 'fila',
+          consultar: 'GET /webhook/res?job_id=job1&formato=json',
+          relatorioHtml: 'GET /webhook/res?job_id=job1', mensagem: 'iniciada'
+        }));
+      } else if (request.url.endsWith('formato=json')) {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ status: state, mensagem: `estado ${state}` }));
+      } else {
+        response.writeHead(200, { 'Content-Type': 'text/html' });
+        response.end('<h1>Relatório</h1><script>x()</script>');
+      }
+    });
+  });
+  await new Promise(resolve => n8n.listen(0, '127.0.0.1', resolve));
+  const analysisDb = new Database(':memory:');
+  const api = createApiServer({
+    db: analysisDb, username, password, staticDir, webhookUrl,
+    analysisWebhookUrl: `http://127.0.0.1:${n8n.address().port}/webhook/start`,
+    analysisWorkflowKey: 'secret-key'
+  });
+  await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${api.address().port}`;
+  try {
+    const loginResponse = await fetch(`${url}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';', 1)[0];
+    const headers = { Cookie: cookie, 'Content-Type': 'application/json' };
+
+    assert.equal((await fetch(`${url}/api/analysis`)).status, 401);
+    const invalid = await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal: favorite }) });
+    assert.equal(invalid.status, 400);
+
+    const proposal = { ...favorite, uasg: '928034', numeroCompra: '58/2026' };
+    const started = await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) });
+    const queued = await started.json();
+    assert.equal(started.status, 200);
+    assert.equal(queued.status, 'pendente');
+    assert.equal(seen.length, 0);
+
+    const again = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).json();
+    assert.equal(again.jobId, queued.jobId);
+
+    const startedJob = await fetch(`${url}/api/analysis/${queued.jobId}/start`, { method: 'POST', headers });
+    const job = await startedJob.json();
+    assert.equal(job.jobId, 'job1');
+    assert.equal(job.status, 'fila');
+    assert.deepEqual(JSON.parse(seen[0].body), { UASG: '928034', numeroCompra: '58/2026' });
+    assert.equal(seen[0].key, 'secret-key');
+
+    const repeated = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).json();
+    assert.equal(repeated.jobId, 'job1');
+    assert.equal(seen.length, 1);
+
+    const other = { ...proposal, idContratacaoPNCP: '999', numeroCompra: '1/2026' };
+    const pending = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal: other }) })).json();
+    assert.equal((await fetch(`${url}/api/analysis/${pending.jobId}/job`, { method: 'DELETE', headers })).status, 200);
+
+    state = 'processando';
+    const running = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
+    assert.equal(running.message, 'estado processando');
+    assert.equal(running.hasReport, false);
+    assert.equal((await fetch(`${url}/api/analysis/job1/report`, { headers })).status, 404);
+
+    state = 'concluido';
+    const done = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
+    assert.equal(done.status, 'concluido');
+    assert.equal(done.hasReport, true);
+    assert.ok(done.completedAt >= done.startedAt);
+
+    const report = await fetch(`${url}/api/analysis/job1/report`, { headers });
+    assert.match(await report.text(), /Relatório/);
+    assert.match(report.headers.get('content-security-policy'), /sandbox/);
+
+    const list = await (await fetch(`${url}/api/analysis`, { headers })).json();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].proposal.numeroCompra, '58/2026');
+  } finally {
+    await new Promise(resolve => api.close(resolve));
+    await new Promise(resolve => n8n.close(resolve));
+    analysisDb.close();
+  }
+});

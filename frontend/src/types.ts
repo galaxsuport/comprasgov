@@ -24,6 +24,8 @@ export interface OportunidadeResultado {
   local: string | null;
   orgao: string | null;
   unidadeCompradora: string | null;
+  uasg?: string | null;
+  numeroCompra?: string | null;
   codigoModalidade: number | null;
   modalidadeIdPncp: number | null;
   modalidade: string | null;

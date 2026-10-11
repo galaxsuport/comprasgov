@@ -1,11 +1,16 @@
-import { useEffect, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import {
   addFavorite,
   discardProposal,
   fetchDiscarded,
   fetchFavorites,
   restoreProposal,
+  beginAnalysis,
+  enqueueAnalysis,
+  refreshAnalysis,
+  fetchAnalyses,
   fetchResultados,
+  getAnalysisParams,
   fetchText,
   fetchDeadline,
   saveText,
@@ -18,8 +23,10 @@ import {
   removeFavorite,
   WebhookPopupError
 } from './api';
+import type { AnalysisJob } from './api';
 import type { OportunidadeResultado, PregaoResultado } from './types';
 import ResultCard from './components/ResultCard';
+import AnalysisPage from './components/AnalysisPage';
 
 const LEGACY_FAVORITES_STORAGE_KEY = 'comprasgov:favorites';
 
@@ -631,16 +638,30 @@ function Header({
   branding,
   showFavorites,
   favoritesCount,
+  showDiscarded,
+  discardedCount,
+  analysisOpen,
+  analysisCount,
+  analysisDoneCount,
   settingsOpen,
   onToggleFavorites,
+  onToggleDiscarded,
+  onToggleAnalysis,
   onToggleSettings,
   onLogout
 }: {
   branding: Branding;
   showFavorites: boolean;
   favoritesCount: number;
+  showDiscarded: boolean;
+  discardedCount: number;
+  analysisOpen: boolean;
+  analysisCount: number;
+  analysisDoneCount: number;
   settingsOpen: boolean;
   onToggleFavorites: () => void;
+  onToggleDiscarded: () => void;
+  onToggleAnalysis: () => void;
   onToggleSettings: () => void;
   onLogout: () => void;
 }) {
@@ -649,7 +670,6 @@ function Header({
       <div>
         <p className="eyebrow">{branding.companyName}</p>
         <h1>{branding.title}</h1>
-        <p className="hero-copy">{branding.subtitle}</p>
       </div>
       <button
         type="button"
@@ -664,13 +684,43 @@ function Header({
       </button>
       <button
         type="button"
+        className={`discarded-toggle${showDiscarded ? ' is-active' : ''}`}
+        onClick={onToggleDiscarded}
+        aria-pressed={showDiscarded}
+        aria-label={`${showDiscarded ? 'Voltar aos resultados' : 'Abrir descartadas'}, ${discardedCount} descartadas`}
+        title={showDiscarded ? 'Voltar aos resultados' : 'Abrir descartadas'}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6h18" />
+          <path d="M8 6V4h8v2" />
+          <path d="M19 6l-1 14H6L5 6" />
+          <path d="M10 11v6M14 11v6" />
+        </svg>
+        <span className="favorites-count" aria-hidden="true">{discardedCount}</span>
+      </button>
+      <button
+        type="button"
+        className={`discarded-toggle analysis-toggle${analysisOpen ? ' is-active' : ''}`}
+        onClick={onToggleAnalysis}
+        aria-pressed={analysisOpen}
+        aria-label={`${analysisOpen ? 'Voltar aos resultados' : 'Abrir análises'}, ${analysisDoneCount} de ${analysisCount} analisadas`}
+        title={analysisOpen ? 'Voltar aos resultados' : 'Abrir análises'}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21l-4.3-4.3" />
+        </svg>
+        <span className="favorites-count" aria-hidden="true">{analysisDoneCount}/{analysisCount}</span>
+      </button>
+      <button
+        type="button"
         className={`settings-toggle${settingsOpen ? ' is-active' : ''}`}
         onClick={onToggleSettings}
         aria-pressed={settingsOpen}
         aria-label={settingsOpen ? 'Fechar configurações' : 'Abrir configurações'}
         title={settingsOpen ? 'Fechar configurações' : 'Abrir configurações'}
       >
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
@@ -678,6 +728,7 @@ function Header({
       <button type="button" className="logout-button" onClick={onLogout}>
         Sair
       </button>
+      <p className="hero-copy">{branding.subtitle}</p>
     </header>
   );
 }
@@ -705,17 +756,19 @@ function matchesSummaryFilter(result: PregaoResultado, filter: SummaryFilter): b
 function Summary({
   results,
   favoritesView,
+  discardedView,
   activeFilter,
   onSelectFilter
 }: {
   results: PregaoResultado[];
   favoritesView: boolean;
+  discardedView: boolean;
   activeFilter: SummaryFilter;
   onSelectFilter: (filter: SummaryFilter) => void;
 }) {
   const count = (filter: SummaryFilter) => results.filter(result => matchesSummaryFilter(result, filter)).length;
   const othersSum = count('dispensas') + count('pregao') + count('sigiloso') + count('srp');
-  const total = othersSum === 0 && !favoritesView ? 0 : results.length;
+  const total = othersSum === 0 && !favoritesView && !discardedView ? 0 : results.length;
 
   return (
     <section className="summary-bar">
@@ -761,11 +814,15 @@ function Summary({
         aria-pressed={activeFilter === null}
         onClick={() => onSelectFilter(null)}
       >
-        <p className="summary-label">{favoritesView ? 'Favoritos salvos' : 'Total'}</p>
+        <p className="summary-label">{discardedView ? 'Descartadas' : favoritesView ? 'Favoritos salvos' : 'Total'}</p>
         <p className="summary-value">{total}</p>
       </button>
       <p className="summary-note">
-        {favoritesView ? 'Oportunidades armazenadas neste navegador.' : 'Os dados são consumidos diretamente do PNCP.'}
+        {discardedView
+          ? 'Propostas descartadas salvas na sua conta.'
+          : favoritesView
+            ? 'Oportunidades armazenadas neste navegador.'
+            : 'Os dados são consumidos diretamente do PNCP.'}
       </p>
     </section>
   );
@@ -945,10 +1002,36 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [favorites, setFavorites] = useState<OportunidadeResultado[]>([]);
   const [favoritesLoading, setFavoritesLoading] = useState(true);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
-  const [discardedKeys, setDiscardedKeys] = useState<Set<string>>(() => new Set());
+  const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const [favoriteOperations, setFavoriteOperations] = useState<Set<string>>(() => new Set());
   const [showFavorites, setShowFavorites] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
+  const analysisCount = analysisJobs.length;
+  const analysisDoneCount = analysisJobs.filter(job => /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status)).length;
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const analysisStates = useMemo(() => {
+    const states = new Map<string, 'done' | 'pending'>();
+    for (const job of analysisJobs) {
+      if (/erro|falha|fail|cancel/i.test(job.status)) continue;
+      const key = getFavoriteKey(job.proposal);
+      if (key) states.set(key, /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status) ? 'done' : 'pending');
+    }
+    return states;
+  }, [analysisJobs]);
+
+  useEffect(() => {
+    fetchAnalyses().then(setAnalysisJobs).catch(() => undefined);
+  }, []);
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
 
   useEffect(() => {
@@ -1071,7 +1154,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const handleFilterChange = (newFilters: FetchFilters) => {
     setSummaryFilter(null);
     setSettingsOpen(false);
+    setAnalysisOpen(false);
     setShowFavorites(false);
+    setShowDiscarded(false);
     setFilters(newFilters);
     window.scrollTo({ top: 0 });
   };
@@ -1080,11 +1165,79 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     setSummaryFilter(current => current === filter ? null : filter);
   };
 
+  // A ordem é definida a cada nova pesquisa; descartar um card não o move até a próxima.
+  const discardedKeysRef = useRef<Set<string>>(new Set());
+  const orderedResults = useMemo(() => {
+    const isDiscarded = (item: PregaoResultado) =>
+      item.tipoSaida === 'oportunidade' && discardedKeysRef.current.has(getFavoriteKey(item) ?? '');
+    return [...resultados.filter(item => !isDiscarded(item)), ...resultados.filter(isDiscarded)];
+  }, [resultados]);
+
+  const discardedKeys = new Set(discarded.map(getFavoriteKey).filter((key): key is string => key !== null));
+
+  discardedKeysRef.current = discardedKeys;
+
   useEffect(() => {
     fetchDiscarded()
-      .then(items => setDiscardedKeys(new Set(items.map(getFavoriteKey).filter((key): key is string => key !== null))))
+      .then(setDiscarded)
       .catch(err => setFavoriteError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
   }, []);
+
+  // Processa só os pendentes do momento do clique; inclusões posteriores ficam de fora.
+  const runAllAnalyses = async () => {
+    if (batchRunning) return;
+    const queue = analysisJobs.filter(job => job.status === 'pendente').map(job => job.jobId);
+    if (queue.length === 0) return;
+
+    const isDone = (job: AnalysisJob) => /erro|falha|fail|cancel|conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status);
+    const replace = (oldId: string, job: AnalysisJob) =>
+      setAnalysisJobs(current => current.map(item => (item.jobId === oldId ? job : item)));
+    const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+    setBatchRunning(true);
+    setBatchError(null);
+    try {
+      for (const id of queue) {
+        if (!mountedRef.current) return;
+        let current: AnalysisJob;
+        try {
+          current = await beginAnalysis(id);
+        } catch (err) {
+          setBatchError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+          return;
+        }
+        replace(id, current);
+
+        let failures = 0;
+        while (mountedRef.current && !isDone(current) && failures < 3) {
+          await wait(5000);
+          try {
+            const updated = await refreshAnalysis(current.jobId);
+            failures = 0;
+            replace(current.jobId, updated);
+            current = updated;
+          } catch {
+            failures += 1;
+          }
+        }
+      }
+    } finally {
+      if (mountedRef.current) setBatchRunning(false);
+    }
+  };
+
+  const analyzeProposal = async (result: OportunidadeResultado) => {
+    setFavoriteError(null);
+    try {
+      const params = getAnalysisParams(result);
+      if (!params) throw new Error('UASG ou número da compra indisponível para esta proposta.');
+      const job = await enqueueAnalysis({ ...result, ...params });
+      setAnalysisJobId(job.jobId);
+      setAnalysisJobs(await fetchAnalyses().catch(() => analysisJobs));
+    } catch (err) {
+      setFavoriteError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+    }
+  };
 
   const toggleDiscard = async (result: OportunidadeResultado) => {
     const key = getFavoriteKey(result);
@@ -1096,12 +1249,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     try {
       if (discarding) await discardProposal(result);
       else await restoreProposal(key);
-      setDiscardedKeys(current => {
-        const updated = new Set(current);
-        if (discarding) updated.add(key);
-        else updated.delete(key);
-        return updated;
-      });
+      setDiscarded(current => discarding
+        ? [result, ...current.filter(item => getFavoriteKey(item) !== key)]
+        : current.filter(item => getFavoriteKey(item) !== key));
     } catch (err) {
       setFavoriteError(err instanceof Error ? err.message : 'Não foi possível atualizar a proposta.');
     } finally {
@@ -1147,7 +1297,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  const baseResults = showFavorites ? favorites : resultados;
+  const baseResults = showDiscarded ? discarded : showFavorites ? favorites : orderedResults;
+  const summaryResults = showDiscarded
+    ? baseResults
+    : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getFavoriteKey(item) ?? ''));
   const visibleResults = baseResults.filter(result => matchesSummaryFilter(result, summaryFilter));
 
   return (
@@ -1168,16 +1321,40 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           branding={branding}
           showFavorites={showFavorites}
           favoritesCount={favorites.length}
+          showDiscarded={showDiscarded}
+          discardedCount={discarded.length}
+          analysisOpen={analysisOpen}
+          analysisCount={analysisCount}
+          analysisDoneCount={analysisDoneCount}
+          onToggleAnalysis={() => {
+            setSettingsOpen(false);
+            setShowFavorites(false);
+            setShowDiscarded(false);
+            setAnalysisOpen(current => !current);
+          }}
           settingsOpen={settingsOpen}
           onToggleFavorites={() => {
+            setAnalysisOpen(false);
             setSettingsOpen(false);
+            setShowDiscarded(false);
             setShowFavorites(current => !current);
           }}
-          onToggleSettings={() => setSettingsOpen(current => !current)}
+          onToggleDiscarded={() => {
+            setAnalysisOpen(false);
+            setSettingsOpen(false);
+            setShowFavorites(false);
+            setShowDiscarded(current => !current);
+          }}
+          onToggleSettings={() => {
+            setAnalysisOpen(false);
+            setSettingsOpen(current => !current);
+          }}
           onLogout={handleLogout}
         />
 
-        {settingsOpen ? (
+        {analysisOpen && !settingsOpen ? (
+          <AnalysisPage focusJobId={analysisJobId} batchRunning={batchRunning} batchError={batchError} onRunAll={() => void runAllAnalyses()} onJobsChange={setAnalysisJobs} onBack={() => setAnalysisOpen(false)} />
+        ) : settingsOpen ? (
           <SettingsPage
             favoritesCount={favorites.length}
             branding={branding}
@@ -1213,8 +1390,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {baseResults.length > 0 ? (
           <>
             <Summary
-              results={baseResults}
+              results={summaryResults}
               favoritesView={showFavorites}
+              discardedView={showDiscarded}
               activeFilter={summaryFilter}
               onSelectFilter={handleSummaryFilterChange}
             />
@@ -1232,6 +1410,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                     isDiscarded={item.tipoSaida === 'oportunidade'
                       && discardedKeys.has(getFavoriteKey(item) ?? '')}
                     onToggleDiscard={toggleDiscard}
+                    onAnalyze={analyzeProposal}
+                    analysisLocked={batchRunning}
+                    analysisState={item.tipoSaida === 'oportunidade' ? analysisStates.get(getFavoriteKey(item) ?? '') : undefined}
                   />
                 ))}
               </section>
@@ -1241,7 +1422,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </>
         ) : !loading && !error ? (
           <div className="status-card">
-            {showFavorites ? 'Nenhum favorito salvo.' : 'Nenhum resultado disponível.'}
+            {showDiscarded ? 'Nenhuma proposta descartada.' : showFavorites ? 'Nenhum favorito salvo.' : 'Nenhum resultado disponível.'}
           </div>
         ) : null}
         </>

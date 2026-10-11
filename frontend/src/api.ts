@@ -134,6 +134,53 @@ export async function restoreProposal(key: string): Promise<void> {
   if (!response.ok) throw new Error(await readApiError(response));
 }
 
+export interface AnalysisJob {
+  jobId: string;
+  status: string;
+  message: string | null;
+  consultar: string | null;
+  relatorioHtml: string | null;
+  hasReport: boolean;
+  proposal: OportunidadeResultado;
+  createdAt: number;
+  updatedAt: number;
+  startedAt: number;
+  completedAt: number | null;
+}
+
+export async function fetchAnalyses(): Promise<AnalysisJob[]> {
+  const response = await fetch('/api/analysis');
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<AnalysisJob[]>;
+}
+
+export async function enqueueAnalysis(proposal: OportunidadeResultado): Promise<AnalysisJob> {
+  const response = await fetch('/api/analysis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposal })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<AnalysisJob>;
+}
+
+export async function beginAnalysis(jobId: string): Promise<AnalysisJob> {
+  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/start`, { method: 'POST' });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<AnalysisJob>;
+}
+
+export async function removeAnalysis(jobId: string): Promise<void> {
+  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/job`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function refreshAnalysis(jobId: string): Promise<AnalysisJob> {
+  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/refresh`, { method: 'POST' });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<AnalysisJob>;
+}
+
 export async function logout(): Promise<void> {
   const response = await fetch(`${AUTH_API_BASE_URL}/logout`, { method: 'POST' });
   if (!response.ok) throw new Error(await readApiError(response));
@@ -173,6 +220,25 @@ function buildApiUrl(filters: FetchFilters = {}): string {
 
   const queryString = params.toString();
   return queryString ? `${baseUrl}?${queryString}` : baseUrl;
+}
+
+const COMPRA_CODE = /compra=(\d{6})(\d{2})(\d{5})(\d{4})(?:\D|$)/;
+
+// Compras.gov.br: UASG(6) + modalidade(2) + número(5) + ano(4) no parâmetro "compra".
+export function getAnalysisParams(result: OportunidadeResultado): { uasg: string; numeroCompra: string } | null {
+  const code = [result.cadastroProposta, result.linkSistemaOrigem]
+    .map(value => value?.match(COMPRA_CODE))
+    .find(Boolean);
+  const uasg = result.uasg ?? result.unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? code?.[1];
+  const numeroCompra = result.numeroCompra ?? (code ? `${Number(code[3])}/${code[4]}` : null);
+  return uasg && numeroCompra ? { uasg, numeroCompra } : null;
+}
+
+function buildNumeroCompra(item: Record<string, unknown>) {
+  const numero = toString(item.numeroCompra);
+  if (!numero) return null;
+  const ano = toString(item.anoCompra);
+  return numero.includes('/') || !ano ? numero : `${numero}/${ano}`;
 }
 
 function buildLink(item: Record<string, unknown>) {
@@ -339,6 +405,8 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     local: toString(item.local) ?? [municipio, uf].filter(Boolean).join('/'),
     orgao: toString(item.orgao ?? orgaoEntidade.razaoSocial ?? unidadeOrgao.nomeUnidade),
     unidadeCompradora,
+    uasg: codigoUnidade ?? unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? null,
+    numeroCompra: buildNumeroCompra(item),
     codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : typeof item.codigoModalidadeConsulta === 'number' ? item.codigoModalidadeConsulta : null,
     modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : typeof item.modalidadeId === 'number' ? item.modalidadeId : null,
     modalidade: toString(item.modalidade ?? item.modalidadeConsulta ?? item.modalidadeContratacao ?? item.modalidadeNome),

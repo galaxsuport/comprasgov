@@ -39,3 +39,7 @@ No desenvolvimento, o banco fica em `server/data/comprasgov.sqlite`. O login é 
 A senha pode ser alterada em Configurações. A nova senha é guardada com hash no SQLite (não no `.env`) e passa a prevalecer sobre `AUTH_PASSWORD`; as demais sessões são encerradas. Para voltar à senha do ambiente, apague a linha correspondente da tabela `credentials`.
 
 Em cada consulta a `/api/pregoes`, o servidor anexa ao webhook as configurações da conta autenticada: `prazo` (dias, 1 a 15; padrão `DEADLINE_DEFAULT_DAYS`) e `termosFortes`, `termosContextuais`, `contextosTecnologicos` e `termosExclusao` (listas separadas por vírgula). Esses valores prevalecem sobre os enviados pelo navegador.
+
+### Análise de editais
+
+O botão **Analisar** do card envia `{ "UASG", "numeroCompra" }` por POST ao endpoint `ANALYSIS_WEBHOOK_URL`, com o cabeçalho `X-Workflow-Key` definido por `ANALYSIS_WORKFLOW_KEY` (a chave fica só no servidor). O `job_id` e os dados do card são gravados no banco; a tela de análises consulta o endpoint `consultar` a cada 5 s para atualizar `status` e `mensagem` e, ao concluir, guarda o HTML de `relatorioHtml`, aberto em `/api/analysis/<job_id>/report` dentro de um sandbox sem scripts.

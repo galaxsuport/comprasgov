@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { getAnalysisParams } from '../api';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
 interface ResultCardProps {
@@ -7,6 +7,9 @@ interface ResultCardProps {
   onToggleFavorite?: (result: OportunidadeResultado) => void;
   isDiscarded?: boolean;
   onToggleDiscard?: (result: OportunidadeResultado) => void;
+  onAnalyze?: (result: OportunidadeResultado) => void;
+  analysisState?: 'done' | 'pending';
+  analysisLocked?: boolean;
 }
 
 function isOportunidade(result: PregaoResultado): result is OportunidadeResultado {
@@ -36,37 +39,11 @@ export default function ResultCard({
   isFavorite = false,
   onToggleFavorite,
   isDiscarded = false,
-  onToggleDiscard
+  onToggleDiscard,
+  onAnalyze,
+  analysisState,
+  analysisLocked = false
 }: ResultCardProps) {
-  const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
-
-  useEffect(() => {
-    if (!proposalLinkCopied) return;
-    const timeoutId = window.setTimeout(() => setProposalLinkCopied(false), 1800);
-    return () => window.clearTimeout(timeoutId);
-  }, [proposalLinkCopied]);
-
-  const copyProposalLink = async () => {
-    if (result.tipoSaida !== 'oportunidade' || !result.cadastroProposta) return;
-
-    try {
-      await navigator.clipboard.writeText(result.cadastroProposta);
-    } catch {
-      const textArea = document.createElement('textarea');
-      textArea.value = result.cadastroProposta;
-      textArea.setAttribute('readonly', '');
-      textArea.style.position = 'fixed';
-      textArea.style.opacity = '0';
-      document.body.appendChild(textArea);
-      textArea.select();
-      const copied = document.execCommand('copy');
-      textArea.remove();
-      if (!copied) return;
-    }
-
-    setProposalLinkCopied(true);
-  };
-
   // Se for resumo, mostra apenas o diagnóstico
   if (isResumo(result)) {
     return (
@@ -197,33 +174,51 @@ export default function ResultCard({
         <p className="section-label">Objeto da contratação</p>
         <p className="object-text">{result.objeto ?? 'Descrição não disponível'}</p>
       </div>
-
-      <div className="card-actions">
-        {result.linkContratacao ? (
-          <a
-            className="action-link"
-            href={result.linkContratacao}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Ver no PNCP
-          </a>
-        ) : null}
-        {result.cadastroProposta ? (
-          <button
-            type="button"
-            className="action-link"
-            onClick={copyProposalLink}
-            aria-label={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
-            title={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
-          >
-            {proposalLinkCopied ? 'Copiado' : 'Link da proposta'}
-          </button>
-        ) : null}
-      </div>
       </div>
 
       <div className="card-discard-row">
+        <button
+          type="button"
+          className="discard-toggle analyze-link"
+          onClick={() => onAnalyze?.(result)}
+          disabled={isDiscarded || analysisLocked || Boolean(analysisState) || !getAnalysisParams(result)}
+          title={analysisLocked && !analysisState ? 'Aguarde o fim da análise em sequência' : analysisState === 'done' ? 'Análise concluída' : analysisState ? 'Análise em andamento' : getAnalysisParams(result) ? 'Analisar edital' : 'UASG ou número da compra indisponível'}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {analysisState === 'done' ? (
+              <path d="M5 12.5l4.5 4.5L19 7.5" />
+            ) : analysisState === 'pending' ? (
+              <>
+                <path d="M6 3h12M6 21h12" />
+                <path d="M7 3v3a5 5 0 0 0 2 4l3 2-3 2a5 5 0 0 0-2 4v3M17 3v3a5 5 0 0 1-2 4l-3 2 3 2a5 5 0 0 1 2 4v3" />
+              </>
+            ) : (
+              <>
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v8M8 12h8" />
+              </>
+            )}
+          </svg>
+          <span>{analysisState === 'done' ? 'Analisado' : analysisState ? 'Analisando' : 'Analisar'}</span>
+        </button>
+        {result.linkContratacao ? (
+          <a
+            className="discard-toggle pncp-link"
+            href={isDiscarded ? undefined : result.linkContratacao}
+            aria-disabled={isDiscarded || undefined}
+            tabIndex={isDiscarded ? -1 : undefined}
+            target="_blank"
+            rel="noreferrer"
+            title="Ver no PNCP"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <path d="M15 3h6v6" />
+              <path d="M10 14L21 3" />
+            </svg>
+            <span>Ver no PNCP</span>
+          </a>
+        ) : null}
         <button
           type="button"
           className="discard-toggle"

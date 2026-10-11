@@ -1,6 +1,7 @@
 import {
   createHash,
   randomBytes,
+  randomUUID,
   scryptSync,
   timingSafeEqual
 } from 'node:crypto';
@@ -16,6 +17,30 @@ import {
   STRONG_TERMS_ADDITIONS_2,
   DEFAULT_TECHNOLOGICAL_CONTEXTS
 } from './default-terms.js';
+
+const PENDING_STATUS = 'pendente';
+const ANALYSIS_JOB_ID = /^[A-Za-z0-9_-]{1,100}$/;
+const MAX_REPORT_BYTES = 5 * 1024 * 1024;
+
+function stripMethod(value) {
+  return typeof value === 'string' ? value.replace(/^\s*(GET|POST)\s+/i, '').trim() : '';
+}
+
+function firstObject(value) {
+  const item = Array.isArray(value) ? value[0] : value;
+  return item && typeof item === 'object' ? item : null;
+}
+
+function classifyAnalysisStatus(status) {
+  if (/erro|falha|fail|cancel/i.test(status)) return 'failed';
+  if (/conclu|finaliz|pronto|sucesso|complet|done/i.test(status)) return 'done';
+  return 'running';
+}
+
+function isTerminalAnalysis(status, hasReport) {
+  const kind = classifyAnalysisStatus(status);
+  return kind === 'failed' || (kind === 'done' && Boolean(hasReport));
+}
 
 const TEXT_SETTINGS = {
   'company-name': {
@@ -241,6 +266,8 @@ export function createApiServer({
   password,
   staticDir,
   webhookUrl,
+  analysisWebhookUrl,
+  analysisWorkflowKey,
   defaultDeadlineDays = DEFAULT_DEADLINE_DAYS,
   secureCookies = process.env.NODE_ENV === 'production'
 }) {
@@ -267,6 +294,27 @@ export function createApiServer({
       PRIMARY KEY (owner, proposal_key)
     )
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS analysis_jobs (
+      owner TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      proposal_key TEXT NOT NULL,
+      proposal_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT,
+      consult_path TEXT NOT NULL,
+      report_path TEXT NOT NULL,
+      report_html TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner, job_id)
+    )
+  `);
+  const analysisColumns = db.prepare('PRAGMA table_info(analysis_jobs)').all().map(column => column.name);
+  for (const column of ['started_at', 'completed_at']) {
+    if (!analysisColumns.includes(column)) db.exec(`ALTER TABLE analysis_jobs ADD COLUMN ${column} INTEGER`);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS credentials (
@@ -360,6 +408,104 @@ export function createApiServer({
   const deleteDiscarded = db.prepare(
     'DELETE FROM discarded_proposals WHERE owner = ? AND proposal_key = ?'
   );
+  const analysisOrigin = analysisWebhookUrl ? new URL(analysisWebhookUrl).origin : null;
+  const ANALYSIS_COLUMNS = `job_id, proposal_key, proposal_json, status, message, consult_path, report_path,
+    report_html IS NOT NULL AS has_report, created_at, updated_at, started_at, completed_at`;
+  const listAnalysisJobs = db.prepare(
+    `SELECT ${ANALYSIS_COLUMNS} FROM analysis_jobs WHERE owner = ? ORDER BY created_at ASC`
+  );
+  const getAnalysisJob = db.prepare(
+    `SELECT ${ANALYSIS_COLUMNS} FROM analysis_jobs WHERE owner = ? AND job_id = ?`
+  );
+  const getAnalysisJobByProposal = db.prepare(
+    `SELECT ${ANALYSIS_COLUMNS} FROM analysis_jobs WHERE owner = ? AND proposal_key = ? ORDER BY created_at DESC LIMIT 1`
+  );
+  const getAnalysisReport = db.prepare(
+    'SELECT report_html FROM analysis_jobs WHERE owner = ? AND job_id = ?'
+  );
+  const insertAnalysisJob = db.prepare(`
+    INSERT INTO analysis_jobs (owner, job_id, proposal_key, proposal_json, status, message, consult_path, report_path, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateAnalysisJob = db.prepare(
+    'UPDATE analysis_jobs SET status = ?, message = ?, updated_at = ? WHERE owner = ? AND job_id = ?'
+  );
+  const completeAnalysisJob = db.prepare(
+    'UPDATE analysis_jobs SET completed_at = ? WHERE owner = ? AND job_id = ? AND completed_at IS NULL'
+  );
+  const startAnalysisJob = db.prepare(
+    `UPDATE analysis_jobs SET job_id = ?, status = ?, message = ?, consult_path = ?, report_path = ?, updated_at = ?, started_at = ?
+     WHERE owner = ? AND job_id = ? AND status = '${PENDING_STATUS}'`
+  );
+  const deleteAnalysisJob = db.prepare(
+    'DELETE FROM analysis_jobs WHERE owner = ? AND job_id = ?'
+  );
+  const saveAnalysisReport = db.prepare(
+    'UPDATE analysis_jobs SET report_html = ?, updated_at = ? WHERE owner = ? AND job_id = ?'
+  );
+
+  function serializeAnalysisJob(row) {
+    return {
+      jobId: row.job_id,
+      status: row.status,
+      message: row.message,
+      consultar: row.consult_path ? `GET ${row.consult_path}` : null,
+      relatorioHtml: row.report_path ? `GET ${row.report_path}` : null,
+      hasReport: Boolean(row.has_report),
+      proposal: JSON.parse(row.proposal_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      startedAt: row.started_at ?? row.created_at,
+      completedAt: row.completed_at ?? null
+    };
+  }
+
+  function resolveAnalysisUrl(path) {
+    const url = new URL(path, analysisOrigin);
+    if (url.origin !== analysisOrigin) throw new Error('Endereço de análise fora do servidor configurado.');
+    return url;
+  }
+
+  async function callAnalysis(url, init = {}) {
+    const result = await fetch(url, {
+      ...init,
+      headers: {
+        ...(analysisWorkflowKey ? { 'X-Workflow-Key': analysisWorkflowKey } : {}),
+        ...init.headers
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000)
+    });
+    const text = await result.text();
+    if (!result.ok) {
+      let detail = '';
+      try { detail = JSON.parse(text).message ?? ''; } catch { detail = text; }
+      throw new Error(`O serviço de análise respondeu HTTP ${result.status}${detail ? `: ${String(detail).slice(0, 200)}` : ''}.`);
+    }
+    return text;
+  }
+
+  async function refreshAnalysisJob(owner, row) {
+    if (row.status === PENDING_STATUS || isTerminalAnalysis(row.status, row.has_report)) return row;
+
+    let status = row.status;
+    let message = row.message;
+    const data = firstObject(JSON.parse(await callAnalysis(resolveAnalysisUrl(row.consult_path))));
+    if (typeof data?.status === 'string' && data.status.trim()) status = data.status.trim().slice(0, 100);
+    const text = [data?.mensagem, data?.progresso].find(value => typeof value === 'string' && value.trim());
+    if (text) message = text.slice(0, 2000);
+    updateAnalysisJob.run(status, message, Date.now(), owner, row.job_id);
+    if (classifyAnalysisStatus(status) === 'done') completeAnalysisJob.run(Date.now(), owner, row.job_id);
+
+    if (classifyAnalysisStatus(status) === 'done' && !row.has_report) {
+      const html = await callAnalysis(resolveAnalysisUrl(row.report_path), { headers: { Accept: 'text/html' } });
+      if (html.trim() && Buffer.byteLength(html, 'utf8') <= MAX_REPORT_BYTES) {
+        saveAnalysisReport.run(html, Date.now(), owner, row.job_id);
+      }
+    }
+    return getAnalysisJob.get(owner, row.job_id);
+  }
+
   const deleteFavorite = db.prepare(
     'DELETE FROM favorites WHERE owner = ? AND favorite_key = ?'
   );
@@ -693,6 +839,142 @@ export function createApiServer({
       jsonResponse(response, 405, { error: 'Método não permitido.' }, {
         Allow: pathname === '/api/discarded' ? 'GET, POST' : 'DELETE'
       });
+      return;
+    }
+
+    if (pathname === '/api/analysis' || pathname.startsWith('/api/analysis/')) {
+      if (!session) {
+        jsonResponse(response, 401, { error: 'Sua sessão expirou. Entre novamente.' });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/analysis') {
+        jsonResponse(response, 200, listAnalysisJobs.all(session.username).map(serializeAnalysisJob));
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/analysis') {
+        if (hasCrossSiteFetch(request)) {
+          jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+          return;
+        }
+        const body = await readJson(request);
+        const normalized = normalizeFavorite(body?.proposal);
+        const uasg = typeof normalized?.value.uasg === 'string' ? normalized.value.uasg.trim() : '';
+        const numeroCompra = typeof normalized?.value.numeroCompra === 'string' ? normalized.value.numeroCompra.trim() : '';
+        if (!normalized || !uasg || !numeroCompra) {
+          jsonResponse(response, 400, { error: 'A proposta não tem UASG e número da compra para análise.' });
+          return;
+        }
+
+        const existing = getAnalysisJobByProposal.get(session.username, normalized.key);
+        if (existing && classifyAnalysisStatus(existing.status) !== 'failed') {
+          jsonResponse(response, 200, serializeAnalysisJob(existing));
+          return;
+        }
+
+        const now = Date.now();
+        const localId = `pendente-${randomUUID()}`;
+        insertAnalysisJob.run(
+          session.username, localId, normalized.key, normalized.serialized,
+          PENDING_STATUS, 'Aguardando início da análise.', '', '', now, now
+        );
+        jsonResponse(response, 200, serializeAnalysisJob(getAnalysisJob.get(session.username, localId)));
+        return;
+      }
+
+      const jobMatch = pathname.match(/^\/api\/analysis\/([^/]+)\/(refresh|report|start|job)$/);
+      const jobId = jobMatch ? decodeURIComponent(jobMatch[1]) : '';
+      if (jobMatch && ANALYSIS_JOB_ID.test(jobId)) {
+        const row = getAnalysisJob.get(session.username, jobId);
+        if (!row) {
+          jsonResponse(response, 404, { error: 'Análise não encontrada.' });
+          return;
+        }
+
+        if (request.method === 'POST' && jobMatch[2] === 'start') {
+          if (hasCrossSiteFetch(request)) {
+            jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+            return;
+          }
+          if (row.status !== PENDING_STATUS) {
+            jsonResponse(response, 200, serializeAnalysisJob(row));
+            return;
+          }
+          if (!analysisWebhookUrl) {
+            jsonResponse(response, 503, { error: 'O endpoint de análise não foi configurado no servidor.' });
+            return;
+          }
+          try {
+            const proposal = JSON.parse(row.proposal_json);
+            const started = firstObject(JSON.parse(await callAnalysis(analysisWebhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ UASG: proposal.uasg, numeroCompra: proposal.numeroCompra })
+            })));
+            const newId = typeof started?.job_id === 'string' ? started.job_id : '';
+            const consultPath = stripMethod(started?.consultar);
+            const reportPath = stripMethod(started?.relatorioHtml);
+            if (!ANALYSIS_JOB_ID.test(newId) || !consultPath || !reportPath) {
+              throw new Error('Resposta inesperada do serviço de análise.');
+            }
+            resolveAnalysisUrl(consultPath);
+            resolveAnalysisUrl(reportPath);
+            startAnalysisJob.run(
+              newId,
+              typeof started.status === 'string' && started.status.trim() ? started.status.trim().slice(0, 100) : 'fila',
+              typeof started.mensagem === 'string' ? started.mensagem.slice(0, 2000) : null,
+              consultPath, reportPath, Date.now(), Date.now(), session.username, jobId
+            );
+            jsonResponse(response, 200, serializeAnalysisJob(getAnalysisJob.get(session.username, newId)));
+          } catch (error) {
+            jsonResponse(response, 502, { error: error instanceof Error ? error.message : 'Falha ao iniciar a análise.' });
+          }
+          return;
+        }
+
+        if (request.method === 'DELETE' && jobMatch[2] === 'job') {
+          if (hasCrossSiteFetch(request)) {
+            jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+            return;
+          }
+          deleteAnalysisJob.run(session.username, jobId);
+          jsonResponse(response, 200, { ok: true });
+          return;
+        }
+
+        if (request.method === 'POST' && jobMatch[2] === 'refresh') {
+          if (hasCrossSiteFetch(request)) {
+            jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+            return;
+          }
+          try {
+            jsonResponse(response, 200, serializeAnalysisJob(await refreshAnalysisJob(session.username, row)));
+          } catch (error) {
+            jsonResponse(response, 502, { error: error instanceof Error ? error.message : 'Falha ao consultar a análise.' });
+          }
+          return;
+        }
+
+        if (request.method === 'GET' && jobMatch[2] === 'report') {
+          const report = getAnalysisReport.get(session.username, jobId)?.report_html;
+          if (!report) {
+            jsonResponse(response, 404, { error: 'O relatório ainda não está disponível.' });
+            return;
+          }
+          // O HTML vem de um serviço externo: sandbox desativa scripts e isola a origem.
+          response.writeHead(200, {
+            'Cache-Control': 'no-store',
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; font-src data: https:",
+            'X-Content-Type-Options': 'nosniff'
+          });
+          response.end(report);
+          return;
+        }
+      }
+
+      jsonResponse(response, 404, { error: 'Recurso não encontrado.' });
       return;
     }
 

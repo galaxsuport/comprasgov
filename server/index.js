@@ -24,7 +24,9 @@ const server = createApiServer({
   username: process.env.AUTH_USERNAME,
   password: process.env.AUTH_PASSWORD,
   staticDir: process.env.STATIC_DIR ?? resolve(serverDir, '../frontend/dist'),
-  webhookUrl: process.env.VITE_API_BASE_URL
+  webhookUrl: process.env.VITE_API_BASE_URL,
+  analysisWebhookUrl: process.env.ANALYSIS_WEBHOOK_URL,
+  analysisWorkflowKey: process.env.ANALYSIS_WORKFLOW_KEY
 });
 
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4174);

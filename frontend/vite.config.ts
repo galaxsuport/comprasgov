@@ -11,6 +11,7 @@ export default defineConfig(() => ({
       '/api/auth': 'http://127.0.0.1:4174',
       '/api/favorites': 'http://127.0.0.1:4174',
       '/api/discarded': 'http://127.0.0.1:4174',
+      '/api/analysis': 'http://127.0.0.1:4174',
       '/api/settings': 'http://127.0.0.1:4174'
     }
   }
