@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { getAnalysisParams } from '../api';
+import { copyText } from '../copyText';
 import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
@@ -31,6 +33,25 @@ export default function ResultCard({
   analysisState,
   analysisLocked = false
 }: ResultCardProps) {
+  const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
+  const [proposalLinkError, setProposalLinkError] = useState(false);
+
+  useEffect(() => {
+    if (!proposalLinkCopied) return;
+    const timeoutId = window.setTimeout(() => setProposalLinkCopied(false), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [proposalLinkCopied]);
+
+  const copyProposalLink = async (link: string) => {
+    try {
+      await copyText(link);
+      setProposalLinkError(false);
+      setProposalLinkCopied(true);
+    } catch {
+      setProposalLinkError(true);
+    }
+  };
+
   // Se for resumo, mostra apenas o diagnóstico
   if (isResumo(result)) {
     return (
@@ -55,6 +76,9 @@ export default function ResultCard({
       </article>
     );
   }
+
+  const proposalLink = result.linkContratacao ?? result.linkSistemaOrigem;
+  const proposalLinkLabel = result.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
 
   const unidadeCompradora = result.unidadeCompradora;
   const scorePercent = Number.isFinite(result.score)
@@ -188,24 +212,36 @@ export default function ResultCard({
           </svg>
           <span>{analysisState === 'done' ? 'Analisado' : analysisState ? 'Analisando' : 'Analisar'}</span>
         </button>
-        {result.linkContratacao ? (
+        {proposalLink ? (
           <a
             className="discard-toggle pncp-link"
-            href={isDiscarded ? undefined : result.linkContratacao}
+            href={isDiscarded ? undefined : proposalLink}
             aria-disabled={isDiscarded || undefined}
             tabIndex={isDiscarded ? -1 : undefined}
             target="_blank"
             rel="noreferrer"
-            title="Ver no PNCP"
+            title={proposalLinkLabel}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <path d="M15 3h6v6" />
               <path d="M10 14L21 3" />
             </svg>
-            <span>Ver no PNCP</span>
+            <span>{proposalLinkLabel}</span>
           </a>
         ) : null}
+        {result.cadastroProposta ? (
+          <button
+            type="button"
+            className="discard-toggle action-link"
+            onClick={() => void copyProposalLink(result.cadastroProposta!)}
+            aria-label={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
+            title={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
+          >
+            {proposalLinkCopied ? 'Copiado' : 'Link da proposta'}
+          </button>
+        ) : null}
+        {proposalLinkError ? <span role="alert">Não foi possível copiar o link.</span> : null}
         <button
           type="button"
           className="discard-toggle"

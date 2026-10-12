@@ -1532,6 +1532,12 @@ body {
   color: #fca5a5;
 }
 
+.discard-toggle.action-link:hover:not(:disabled) {
+  border-color: #facc15;
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+}
+
 .discard-toggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { copyText } from '../copyText';
 import TimeRemaining from './TimeRemaining';
 import { beginAnalysis, fetchAnalyses, refreshAnalysis, removeAnalysis, restartAnalysis, type AnalysisJob } from '../api';
 
@@ -47,6 +48,25 @@ export default function AnalysisPage({
   const [jobs, setJobs] = useState<AnalysisJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copiedProposalJobId, setCopiedProposalJobId] = useState<string | null>(null);
+  const [copyErrorJobId, setCopyErrorJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!copiedProposalJobId) return;
+    const timeoutId = window.setTimeout(() => setCopiedProposalJobId(null), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [copiedProposalJobId]);
+
+  const copyProposalLink = async (job: AnalysisJob) => {
+    if (!job.proposal.cadastroProposta) return;
+    try {
+      await copyText(job.proposal.cadastroProposta);
+      setCopiedProposalJobId(job.jobId);
+      setCopyErrorJobId(null);
+    } catch {
+      setCopyErrorJobId(job.jobId);
+    }
+  };
 
   const startJob = async (job: AnalysisJob) => {
     setError(null);
@@ -135,6 +155,15 @@ export default function AnalysisPage({
     };
   }, []);
 
+  const jobsByDeadline = [...jobs].sort((a, b) => {
+    const timeA = a.proposal.dataEncerramentoProposta ? Date.parse(a.proposal.dataEncerramentoProposta) : NaN;
+    const timeB = b.proposal.dataEncerramentoProposta ? Date.parse(b.proposal.dataEncerramentoProposta) : NaN;
+    if (Number.isNaN(timeA) && Number.isNaN(timeB)) return 0;
+    if (Number.isNaN(timeA)) return 1;
+    if (Number.isNaN(timeB)) return -1;
+    return timeA - timeB;
+  });
+
   return (
     <section className="settings-page analysis-page">
       <h2>Análises</h2>
@@ -143,7 +172,10 @@ export default function AnalysisPage({
       {loading ? <div className="status-card">Carregando análises...</div> : null}
       {!loading && jobs.length === 0 ? <div className="status-card">Nenhuma análise solicitada.</div> : null}
       <div className="analysis-list">
-        {jobs.map(job => (
+        {jobsByDeadline.map(job => {
+          const proposalLink = job.proposal.linkContratacao ?? job.proposal.linkSistemaOrigem;
+          const proposalLinkLabel = job.proposal.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
+          return (
           <article
             key={job.jobId}
             className={`analysis-card${job.jobId === focusJobId ? ' is-focused' : ''}`}
@@ -174,6 +206,34 @@ export default function AnalysisPage({
               ) : null}
             </dl>
             <div className="card-discard-row analysis-actions">
+              {!batchRunning && proposalLink ? (
+                <a
+                  className="discard-toggle pncp-link"
+                  href={proposalLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={proposalLinkLabel}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14L21 3" />
+                  </svg>
+                  <span>{proposalLinkLabel}</span>
+                </a>
+              ) : null}
+              {!batchRunning && job.proposal.cadastroProposta ? (
+                <button
+                  type="button"
+                  className="discard-toggle action-link"
+                  onClick={() => void copyProposalLink(job)}
+                  aria-label={copiedProposalJobId === job.jobId ? 'Link copiado' : 'Copiar link da proposta'}
+                  title={copiedProposalJobId === job.jobId ? 'Link copiado' : 'Copiar link da proposta'}
+                >
+                  {copiedProposalJobId === job.jobId ? 'Copiado' : 'Link da proposta'}
+                </button>
+              ) : null}
+              {copyErrorJobId === job.jobId ? <span role="alert">Não foi possível copiar o link.</span> : null}
               {batchRunning ? null : job.status === 'pendente' ? (
                 <>
                   <button type="button" className="discard-toggle analyze-link" onClick={() => void startJob(job)}>
@@ -228,7 +288,8 @@ export default function AnalysisPage({
               )}
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
       <div className="analysis-footer">
         <button type="button" className="logout-button" onClick={onBack}>Voltar aos resultados</button>

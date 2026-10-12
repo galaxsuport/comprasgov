@@ -1312,7 +1312,15 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
     }
   };
 
-  const baseResults = showDiscarded ? discarded : showFavorites ? favorites : orderedResults;
+  const favoritesByDeadline = [...favorites].sort((a, b) => {
+    const timeA = a.dataEncerramentoProposta ? Date.parse(a.dataEncerramentoProposta) : NaN;
+    const timeB = b.dataEncerramentoProposta ? Date.parse(b.dataEncerramentoProposta) : NaN;
+    if (Number.isNaN(timeA) && Number.isNaN(timeB)) return 0;
+    if (Number.isNaN(timeA)) return 1;
+    if (Number.isNaN(timeB)) return -1;
+    return timeA - timeB;
+  });
+  const baseResults = showDiscarded ? discarded : showFavorites ? favoritesByDeadline : orderedResults;
   const summaryResults = showDiscarded
     ? baseResults
     : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getFavoriteKey(item) ?? ''));
