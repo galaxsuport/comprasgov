@@ -1609,6 +1609,19 @@ body {
   overflow-wrap: anywhere;
 }
 
+.analysis-value {
+  color: #166534;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.analysis-object {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .analysis-status {
   padding: 0.15rem 0.6rem;
   border-radius: 999px;

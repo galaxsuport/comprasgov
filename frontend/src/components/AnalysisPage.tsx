@@ -156,8 +156,10 @@ export default function AnalysisPage({
             <dl>
               <dt>job_id</dt>
               <dd>{job.jobId}</dd>
+              <dt>resumo do objeto</dt>
+              <dd className="analysis-object" title={job.proposal.objeto ?? undefined}>{job.proposal.objeto ?? '—'}</dd>
               <dt>valor do edital</dt>
-              <dd>{job.proposal.valor ?? '—'}</dd>
+              <dd className="analysis-value">{job.proposal.valor ?? '—'}</dd>
               <dt>tempo restante</dt>
               <dd><TimeRemaining deadline={job.proposal.dataEncerramentoProposta} /></dd>
               <dt>mensagem</dt>
