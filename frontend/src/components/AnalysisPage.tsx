@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { copyText } from '../copyText';
+import { formatDateTime } from '../format';
 import TimeRemaining from './TimeRemaining';
-import { beginAnalysis, fetchAnalyses, refreshAnalysis, removeAnalysis, restartAnalysis, type AnalysisJob } from '../api';
+import { beginAnalysis, fetchAnalyses, getFavoriteKey, refreshAnalysis, removeAnalysis, restartAnalysis, type AnalysisJob } from '../api';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -34,20 +35,28 @@ export default function AnalysisPage({
   focusJobId,
   batchRunning,
   batchError,
+  registeredKeys = new Set(),
   onRunAll,
   onJobsChange,
+  onRegisterProposal,
+  onOpenCalendar,
   onBack
 }: {
   focusJobId: string | null;
   batchRunning: boolean;
   batchError: string | null;
+  registeredKeys?: Set<string>;
   onRunAll: () => void;
   onJobsChange: (jobs: AnalysisJob[]) => void;
+  onRegisterProposal?: (job: AnalysisJob) => Promise<void> | void;
+  onOpenCalendar?: () => void;
   onBack: () => void;
 }) {
   const [jobs, setJobs] = useState<AnalysisJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [registeringJobId, setRegisteringJobId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [copiedProposalJobId, setCopiedProposalJobId] = useState<string | null>(null);
   const [copyErrorJobId, setCopyErrorJobId] = useState<string | null>(null);
 
@@ -56,6 +65,27 @@ export default function AnalysisPage({
     const timeoutId = window.setTimeout(() => setCopiedProposalJobId(null), 1800);
     return () => window.clearTimeout(timeoutId);
   }, [copiedProposalJobId]);
+
+  const handleToggleRegister = async (job: AnalysisJob) => {
+    if (!onRegisterProposal || registeringJobId) return;
+    setRegisteringJobId(job.jobId);
+    setError(null);
+    try {
+      const key = getFavoriteKey(job.proposal);
+      const wasRegistered = Boolean(key && registeredKeys.has(key));
+      await onRegisterProposal(job);
+      setSuccessMessage(
+        wasRegistered
+          ? 'Proposta desmarcada da agenda de cadastradas.'
+          : 'Proposta enviada para a lista de propostas cadastradas!'
+      );
+      window.setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível cadastrar a proposta.');
+    } finally {
+      setRegisteringJobId(null);
+    }
+  };
 
   const copyProposalLink = async (job: AnalysisJob) => {
     if (!job.proposal.cadastroProposta) return;
@@ -169,12 +199,28 @@ export default function AnalysisPage({
       <h2>Análises</h2>
       {batchError ? <div className="status-card status-error" role="alert">{batchError}</div> : null}
       {error ? <div className="status-card status-error" role="alert">{error}</div> : null}
+      {successMessage ? (
+        <div className="status-card status-success-banner" role="status">
+          <span>{successMessage}</span>
+          {onOpenCalendar ? (
+            <button
+              type="button"
+              className="discard-toggle calendar-banner-btn"
+              onClick={onOpenCalendar}
+            >
+              Ver na agenda
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {loading ? <div className="status-card">Carregando análises...</div> : null}
       {!loading && jobs.length === 0 ? <div className="status-card">Nenhuma análise solicitada.</div> : null}
       <div className="analysis-list">
         {jobsByDeadline.map(job => {
           const proposalLink = job.proposal.linkContratacao ?? job.proposal.linkSistemaOrigem;
           const proposalLinkLabel = job.proposal.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
+          const pKey = getFavoriteKey(job.proposal);
+          const isRegistered = Boolean(pKey && registeredKeys.has(pKey));
           return (
           <article
             key={job.jobId}
@@ -182,6 +228,7 @@ export default function AnalysisPage({
           >
             <header>
               <span className={`analysis-status analysis-${statusTone(job.status)}`}>{job.status}</span>
+              {isRegistered ? <span className="analysis-status analysis-registered-badge">Cadastrada</span> : null}
               <strong>{job.proposal.unidadeCompradora ?? job.proposal.orgao ?? 'Proposta'}</strong>
               <span>{job.proposal.numeroCompra}</span>
             </header>
@@ -192,6 +239,8 @@ export default function AnalysisPage({
               <dd className="analysis-object" title={job.proposal.objeto ?? undefined}>{job.proposal.objeto ?? '—'}</dd>
               <dt>valor do edital</dt>
               <dd className="analysis-value">{job.proposal.valor ?? '—'}</dd>
+              <dt>abertura da sessão</dt>
+              <dd>{formatDateTime(job.proposal.dataEncerramentoProposta)}</dd>
               <dt>tempo restante</dt>
               <dd><TimeRemaining deadline={job.proposal.dataEncerramentoProposta} /></dd>
               <dt>mensagem</dt>
@@ -234,6 +283,46 @@ export default function AnalysisPage({
                 </button>
               ) : null}
               {copyErrorJobId === job.jobId ? <span role="alert">Não foi possível copiar o link.</span> : null}
+              {!batchRunning && onRegisterProposal ? (
+                <button
+                  type="button"
+                  className={`discard-toggle register-toggle-btn${isRegistered ? ' is-registered' : ''}`}
+                  disabled={registeringJobId === job.jobId}
+                  onClick={() => void handleToggleRegister(job)}
+                  title={isRegistered ? 'Remover da agenda de propostas cadastradas' : 'Adicionar à agenda de propostas cadastradas'}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                    {isRegistered ? <path d="M9 16l2 2 4-4" /> : null}
+                  </svg>
+                  <span>
+                    {registeringJobId === job.jobId
+                      ? 'Salvando...'
+                      : isRegistered
+                      ? 'Cadastrada'
+                      : 'Proposta cadastrada'}
+                  </span>
+                </button>
+              ) : null}
+              {!batchRunning && isRegistered && onOpenCalendar ? (
+                <button
+                  type="button"
+                  className="discard-toggle calendar-toggle"
+                  onClick={onOpenCalendar}
+                  title="Abrir agenda de propostas cadastradas"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                  <span>Ver na agenda</span>
+                </button>
+              ) : null}
               {batchRunning ? null : job.status === 'pendente' ? (
                 <>
                   <button type="button" className="discard-toggle analyze-link" onClick={() => void startJob(job)}>

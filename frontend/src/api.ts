@@ -93,6 +93,12 @@ export async function saveTerms(kind: TermKind, terms: string[]): Promise<string
   return ((await response.json()) as { terms: string[] }).terms;
 }
 
+export function getFavoriteKey(result: OportunidadeResultado): string | null {
+  if (result.idContratacaoPNCP) return `id:${result.idContratacaoPNCP}`;
+  if (result.linkContratacao) return `link:${result.linkContratacao}`;
+  return null;
+}
+
 export async function fetchFavorites(): Promise<OportunidadeResultado[]> {
   const response = await fetch('/api/favorites');
   if (!response.ok) throw new Error(await readApiError(response));
@@ -131,6 +137,26 @@ export async function discardProposal(proposal: OportunidadeResultado): Promise<
 
 export async function restoreProposal(key: string): Promise<void> {
   const response = await fetch(`/api/discarded/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function fetchRegistered(): Promise<OportunidadeResultado[]> {
+  const response = await fetch('/api/registered');
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<OportunidadeResultado[]>;
+}
+
+export async function registerProposal(proposal: OportunidadeResultado): Promise<void> {
+  const response = await fetch('/api/registered', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposal })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
+export async function unregisterProposal(key: string): Promise<void> {
+  const response = await fetch(`/api/registered/${encodeURIComponent(key)}`, { method: 'DELETE' });
   if (!response.ok) throw new Error(await readApiError(response));
 }
 

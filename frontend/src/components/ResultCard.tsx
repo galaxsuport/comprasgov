@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getAnalysisParams } from '../api';
 import { copyText } from '../copyText';
+import { formatDateTime } from '../format';
 import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
@@ -159,6 +160,10 @@ export default function ResultCard({
               })
             ) : '—'}
           </strong>
+        </div>
+        <div>
+          <span>Abertura da sessão</span>
+          <strong>{formatDateTime(result.dataEncerramentoProposta)}</strong>
         </div>
         <div>
           <span>Situação</span>

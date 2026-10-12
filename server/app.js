@@ -299,6 +299,16 @@ export function createApiServer({
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS registered_proposals (
+      owner TEXT NOT NULL,
+      proposal_key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      registered_at INTEGER NOT NULL,
+      PRIMARY KEY (owner, proposal_key)
+    )
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS analysis_jobs (
       owner TEXT NOT NULL,
       job_id TEXT NOT NULL,
@@ -410,6 +420,19 @@ export function createApiServer({
   `);
   const deleteDiscarded = db.prepare(
     'DELETE FROM discarded_proposals WHERE owner = ? AND proposal_key = ?'
+  );
+  const listRegistered = db.prepare(
+    'SELECT value_json FROM registered_proposals WHERE owner = ? ORDER BY registered_at DESC, proposal_key'
+  );
+  const saveRegistered = db.prepare(`
+    INSERT INTO registered_proposals (owner, proposal_key, value_json, registered_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(owner, proposal_key) DO UPDATE SET
+      value_json = excluded.value_json,
+      registered_at = excluded.registered_at
+  `);
+  const deleteRegistered = db.prepare(
+    'DELETE FROM registered_proposals WHERE owner = ? AND proposal_key = ?'
   );
   const analysisOrigin = analysisWebhookUrl ? new URL(analysisWebhookUrl).origin : null;
   const ANALYSIS_COLUMNS = `job_id, proposal_key, proposal_json, status, message, consult_path, report_path,
@@ -847,6 +870,61 @@ export function createApiServer({
 
       jsonResponse(response, 405, { error: 'Método não permitido.' }, {
         Allow: pathname === '/api/discarded' ? 'GET, POST' : 'DELETE'
+      });
+      return;
+    }
+
+    if (pathname === '/api/registered' || pathname.startsWith('/api/registered/')) {
+      if (!session) {
+        jsonResponse(response, 401, { error: 'Sua sessão expirou. Entre novamente.' });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/api/registered') {
+        jsonResponse(response, 200, listRegistered.all(session.username).map(row => JSON.parse(row.value_json)));
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/registered') {
+        if (hasCrossSiteFetch(request)) {
+          jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+          return;
+        }
+        const body = await readJson(request);
+        const normalized = normalizeFavorite(body?.proposal);
+        if (!normalized) {
+          jsonResponse(response, 400, { error: 'A proposta enviada não é válida.' });
+          return;
+        }
+        saveRegistered.run(session.username, normalized.key, normalized.serialized, Date.now());
+        jsonResponse(response, 200, normalized.value);
+        return;
+      }
+
+      if (request.method === 'DELETE' && pathname.startsWith('/api/registered/')) {
+        if (hasCrossSiteFetch(request)) {
+          jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
+          return;
+        }
+        let key;
+        try {
+          key = decodeURIComponent(pathname.slice('/api/registered/'.length));
+        } catch {
+          jsonResponse(response, 400, { error: 'Identificador de proposta inválido.' });
+          return;
+        }
+        if (!key || key.length > 4096) {
+          jsonResponse(response, 400, { error: 'Identificador de proposta inválido.' });
+          return;
+        }
+        deleteRegistered.run(session.username, key);
+        response.writeHead(204, { 'Cache-Control': 'no-store' });
+        response.end();
+        return;
+      }
+
+      jsonResponse(response, 405, { error: 'Método não permitido.' }, {
+        Allow: pathname === '/api/registered' ? 'GET, POST' : 'DELETE'
       });
       return;
     }

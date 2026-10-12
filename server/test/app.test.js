@@ -420,6 +420,34 @@ test('stores discarded proposals per user and restores them', async () => {
   }
 });
 
+test('stores registered proposals per user and restores them', async () => {
+  const isolatedDb = new Database(':memory:');
+  const isolated = createApiServer({ db: isolatedDb, username, password, staticDir, webhookUrl });
+  await new Promise(resolve => isolated.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${isolated.address().port}`;
+
+  try {
+    assert.equal((await fetch(`${url}/api/registered`)).status, 401);
+    const loginResponse = await fetch(`${url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const headers = { Cookie: loginResponse.headers.get('set-cookie').split(';', 1)[0], 'Content-Type': 'application/json' };
+    const proposal = { tipoSaida: 'oportunidade', idContratacaoPNCP: 'reg-1', objeto: 'Servidor Registrado' };
+
+    assert.equal((await fetch(`${url}/api/registered`, { method: 'POST', headers, body: JSON.stringify({ proposal: { tipoSaida: 'resumo' } }) })).status, 400);
+    assert.equal((await fetch(`${url}/api/registered`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).status, 200);
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), [proposal]);
+
+    assert.equal((await fetch(`${url}/api/registered/${encodeURIComponent('id:reg-1')}`, { method: 'DELETE', headers })).status, 204);
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), []);
+  } finally {
+    await new Promise(resolve => isolated.close(resolve));
+    isolatedDb.close();
+  }
+});
+
 test('runs an analysis job, tracks its status and stores the report', async () => {
   let state = 'fila';
   let startCounter = 1;

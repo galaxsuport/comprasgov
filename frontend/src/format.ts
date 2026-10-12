@@ -1,3 +1,16 @@
+export function formatDateTime(isoString: string | null): string {
+  if (!isoString) return '—';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export function formatTempoRestante(dataEncerramento: string | null): string {
   if (!dataEncerramento) return '—';
 

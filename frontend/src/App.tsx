@@ -4,7 +4,10 @@ import {
   discardProposal,
   fetchDiscarded,
   fetchFavorites,
+  fetchRegistered,
+  registerProposal,
   restoreProposal,
+  unregisterProposal,
   beginAnalysis,
   enqueueAnalysis,
   refreshAnalysis,
@@ -27,6 +30,7 @@ import type { AnalysisJob } from './api';
 import type { OportunidadeResultado, PregaoResultado } from './types';
 import ResultCard from './components/ResultCard';
 import AnalysisPage from './components/AnalysisPage';
+import CalendarPage from './components/CalendarPage';
 
 const LEGACY_FAVORITES_STORAGE_KEY = 'comprasgov:favorites';
 
@@ -638,6 +642,8 @@ function Header({
   branding,
   showFavorites,
   favoritesCount,
+  showCalendar,
+  registeredCount,
   showDiscarded,
   discardedCount,
   analysisOpen,
@@ -645,6 +651,7 @@ function Header({
   analysisDoneCount,
   settingsOpen,
   onToggleFavorites,
+  onToggleCalendar,
   onToggleDiscarded,
   onToggleAnalysis,
   onToggleSettings,
@@ -654,6 +661,8 @@ function Header({
   branding: Branding;
   showFavorites: boolean;
   favoritesCount: number;
+  showCalendar: boolean;
+  registeredCount: number;
   showDiscarded: boolean;
   discardedCount: number;
   analysisOpen: boolean;
@@ -661,6 +670,7 @@ function Header({
   analysisDoneCount: number;
   settingsOpen: boolean;
   onToggleFavorites: () => void;
+  onToggleCalendar: () => void;
   onToggleDiscarded: () => void;
   onToggleAnalysis: () => void;
   onToggleSettings: () => void;
@@ -683,6 +693,22 @@ function Header({
       >
         <span className="favorites-toggle-icon" aria-hidden="true">★</span>
         <span className="favorites-count" aria-hidden="true">{favoritesCount}</span>
+      </button>
+      <button
+        type="button"
+        className={`discarded-toggle calendar-toggle${showCalendar ? ' is-active' : ''}`}
+        onClick={onToggleCalendar}
+        aria-pressed={showCalendar}
+        aria-label={`${showCalendar ? 'Voltar aos resultados' : 'Abrir agenda'}, ${registeredCount} propostas cadastradas`}
+        title={showCalendar ? 'Voltar aos resultados' : 'Abrir agenda de propostas cadastradas'}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+        <span className="favorites-count" aria-hidden="true">{registeredCount}</span>
       </button>
       <button
         type="button"
@@ -1008,6 +1034,8 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
+  const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
+  const [showCalendar, setShowCalendar] = useState(false);
   const [favoriteOperations, setFavoriteOperations] = useState<Set<string>>(() => new Set());
   const [showFavorites, setShowFavorites] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1170,11 +1198,27 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
   };
 
   // A ordem é definida a cada nova pesquisa; descartar um card não o move até a próxima.
+  // Prioridade:
+  // 1. Propostas não descartadas
+  // 2. Registro de preço igual a "Não" (registroPreco !== true) antes de registro de preço igual a "Sim" (registroPreco === true)
+  // Mantém resumos e a ordem original relativa de cada grupo.
   const discardedKeysRef = useRef<Set<string>>(new Set());
   const orderedResults = useMemo(() => {
     const isDiscarded = (item: PregaoResultado) =>
       item.tipoSaida === 'oportunidade' && discardedKeysRef.current.has(getFavoriteKey(item) ?? '');
-    return [...resultados.filter(item => !isDiscarded(item)), ...resultados.filter(isDiscarded)];
+    const isSrp = (item: PregaoResultado) =>
+      item.tipoSaida === 'oportunidade' && item.registroPreco === true;
+
+    const notDiscarded = resultados.filter(item => !isDiscarded(item));
+    const discardedItems = resultados.filter(isDiscarded);
+
+    const notDiscardedNonSrp = notDiscarded.filter(item => !isSrp(item));
+    const notDiscardedSrp = notDiscarded.filter(isSrp);
+
+    const discardedNonSrp = discardedItems.filter(item => !isSrp(item));
+    const discardedSrp = discardedItems.filter(isSrp);
+
+    return [...notDiscardedNonSrp, ...notDiscardedSrp, ...discardedNonSrp, ...discardedSrp];
   }, [resultados]);
 
   const discardedKeys = new Set(discarded.map(getFavoriteKey).filter((key): key is string => key !== null));
@@ -1185,6 +1229,9 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
     fetchDiscarded()
       .then(setDiscarded)
       .catch(err => setFavoriteError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
+    fetchRegistered()
+      .then(setRegistered)
+      .catch(() => undefined);
   }, []);
 
   // Processa só os pendentes do momento do clique; inclusões posteriores ficam de fora.
@@ -1312,6 +1359,23 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
     }
   };
 
+  const registeredKeys = useMemo(() => {
+    return new Set(registered.map(getFavoriteKey).filter((k): k is string => k !== null));
+  }, [registered]);
+
+  const toggleRegisterProposal = async (proposal: OportunidadeResultado) => {
+    const key = getFavoriteKey(proposal);
+    if (!key) throw new Error('Não foi possível identificar a proposta para cadastro.');
+    const isReg = registeredKeys.has(key);
+    if (isReg) {
+      await unregisterProposal(key);
+      setRegistered(current => current.filter(item => getFavoriteKey(item) !== key));
+    } else {
+      await registerProposal(proposal);
+      setRegistered(current => [proposal, ...current.filter(item => getFavoriteKey(item) !== key)]);
+    }
+  };
+
   const favoritesByDeadline = [...favorites].sort((a, b) => {
     const timeA = a.dataEncerramentoProposta ? Date.parse(a.dataEncerramentoProposta) : NaN;
     const timeB = b.dataEncerramentoProposta ? Date.parse(b.dataEncerramentoProposta) : NaN;
@@ -1344,6 +1408,8 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
           branding={branding}
           showFavorites={showFavorites}
           favoritesCount={favorites.length}
+          showCalendar={showCalendar}
+          registeredCount={registered.length}
           showDiscarded={showDiscarded}
           discardedCount={discarded.length}
           analysisOpen={analysisOpen}
@@ -1352,6 +1418,7 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
           onToggleAnalysis={() => {
             setSettingsOpen(false);
             setShowFavorites(false);
+            setShowCalendar(false);
             setShowDiscarded(false);
             setAnalysisOpen(current => !current);
           }}
@@ -1359,25 +1426,54 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
           onToggleFavorites={() => {
             setAnalysisOpen(false);
             setSettingsOpen(false);
+            setShowCalendar(false);
             setShowDiscarded(false);
             setShowFavorites(current => !current);
+          }}
+          onToggleCalendar={() => {
+            setAnalysisOpen(false);
+            setSettingsOpen(false);
+            setShowFavorites(false);
+            setShowDiscarded(false);
+            setShowCalendar(current => !current);
           }}
           onToggleDiscarded={() => {
             setAnalysisOpen(false);
             setSettingsOpen(false);
             setShowFavorites(false);
+            setShowCalendar(false);
             setShowDiscarded(current => !current);
           }}
           onToggleSettings={() => {
             setAnalysisOpen(false);
+            setShowCalendar(false);
             setSettingsOpen(current => !current);
           }}
           onLogout={handleLogout}
           showLogout={authRequired}
         />
 
-        {analysisOpen && !settingsOpen ? (
-          <AnalysisPage focusJobId={analysisJobId} batchRunning={batchRunning} batchError={batchError} onRunAll={() => void runAllAnalyses()} onJobsChange={setAnalysisJobs} onBack={() => setAnalysisOpen(false)} />
+        {showCalendar && !settingsOpen ? (
+          <CalendarPage
+            proposals={registered}
+            onUnregister={toggleRegisterProposal}
+            onBack={() => setShowCalendar(false)}
+          />
+        ) : analysisOpen && !settingsOpen ? (
+          <AnalysisPage
+            focusJobId={analysisJobId}
+            batchRunning={batchRunning}
+            batchError={batchError}
+            registeredKeys={registeredKeys}
+            onRunAll={() => void runAllAnalyses()}
+            onJobsChange={setAnalysisJobs}
+            onRegisterProposal={(job) => toggleRegisterProposal(job.proposal)}
+            onOpenCalendar={() => {
+              setAnalysisOpen(false);
+              setShowCalendar(true);
+            }}
+            onBack={() => setAnalysisOpen(false)}
+          />
         ) : settingsOpen ? (
           <SettingsPage
             favoritesCount={favorites.length}
