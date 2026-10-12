@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { beginAnalysis, fetchAnalyses, refreshAnalysis, removeAnalysis, type AnalysisJob } from '../api';
+import { beginAnalysis, fetchAnalyses, refreshAnalysis, removeAnalysis, restartAnalysis, type AnalysisJob } from '../api';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -7,6 +7,10 @@ function isFinished(job: AnalysisJob) {
   if (job.status === 'pendente') return true;
   if (/erro|falha|fail|cancel/i.test(job.status)) return true;
   return /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status) && job.hasReport;
+}
+
+function isFailed(status: string) {
+  return /erro|falha|fail|cancel/i.test(status);
 }
 
 function formatDuration(ms: number) {
@@ -50,6 +54,21 @@ export default function AnalysisPage({
       setJobs(current => current.map(item => (item.jobId === job.jobId ? started : item)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+    }
+  };
+
+  const [restarting, setRestarting] = useState<string | null>(null);
+
+  const restartJob = async (job: AnalysisJob) => {
+    setError(null);
+    setRestarting(job.jobId);
+    try {
+      const restarted = await restartAnalysis(job.jobId);
+      setJobs(current => current.map(item => (item.jobId === job.jobId ? restarted : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível refazer a análise.');
+    } finally {
+      setRestarting(null);
     }
   };
 
@@ -168,20 +187,38 @@ export default function AnalysisPage({
                   <span>Excluir</span>
                 </button>
               )}
-              <button
-                type="button"
-                className="discard-toggle result-link"
-                onClick={() => window.open(`/api/analysis/${encodeURIComponent(job.jobId)}/report`, '_blank', 'noopener')}
-                disabled={!job.hasReport}
-                title={job.hasReport ? 'Abrir resultado' : 'Disponível após a conclusão da análise'}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 3v5h5" />
-                  <path d="M9 13h6M9 17h6" />
-                </svg>
-                <span>Resultado</span>
-              </button>
+              {isFailed(job.status) ? (
+                <button
+                  type="button"
+                  className="discard-toggle result-link"
+                  onClick={() => void restartJob(job)}
+                  disabled={batchRunning || restarting === job.jobId}
+                  title="Iniciar uma nova análise com novo job_id"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" />
+                    <path d="M21 3v5h-5" />
+                    <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" />
+                    <path d="M3 21v-5h5" />
+                  </svg>
+                  <span>{restarting === job.jobId ? 'Refazendo…' : 'Refazer análise'}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="discard-toggle result-link"
+                  onClick={() => window.open(`/api/analysis/${encodeURIComponent(job.jobId)}/report`, '_blank', 'noopener')}
+                  disabled={!job.hasReport}
+                  title={job.hasReport ? 'Abrir resultado' : 'Disponível após a conclusão da análise'}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6M9 17h6" />
+                  </svg>
+                  <span>Resultado</span>
+                </button>
+              )}
             </div>
           </article>
         ))}

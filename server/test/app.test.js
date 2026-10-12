@@ -422,6 +422,7 @@ test('stores discarded proposals per user and restores them', async () => {
 
 test('runs an analysis job, tracks its status and stores the report', async () => {
   let state = 'fila';
+  let startCounter = 1;
   const seen = [];
   const n8n = createWebhookServer((request, response) => {
     let body = '';
@@ -431,9 +432,9 @@ test('runs an analysis job, tracks its status and stores the report', async () =
       if (request.url === '/webhook/start') {
         response.writeHead(200, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({
-          job_id: 'job1', status: 'fila',
-          consultar: 'GET /webhook/res?job_id=job1&formato=json',
-          relatorioHtml: 'GET /webhook/res?job_id=job1', mensagem: 'iniciada'
+          job_id: `job${startCounter}`, status: 'fila',
+          consultar: `GET /webhook/res?job_id=job${startCounter}&formato=json`,
+          relatorioHtml: `GET /webhook/res?job_id=job${startCounter}`, mensagem: 'iniciada'
         }));
       } else if (request.url.endsWith('formato=json')) {
         response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -494,15 +495,26 @@ test('runs an analysis job, tracks its status and stores the report', async () =
     const running = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
     assert.equal(running.message, 'estado processando');
     assert.equal(running.hasReport, false);
-    assert.equal((await fetch(`${url}/api/analysis/job1/report`, { headers })).status, 404);
+    assert.equal((await fetch(`${url}/api/analysis/job2/report`, { headers })).status, 404);
+
+    state = 'erro';
+    const failed = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
+    assert.equal(failed.status, 'erro');
+    assert.equal((await fetch(`${url}/api/analysis/job1/start`, { method: 'POST', headers })).status, 200);
+    assert.equal(seen.filter(call => call.url === '/webhook/start').length, 1);
+    startCounter = 2;
+    const redone = await (await fetch(`${url}/api/analysis/job1/restart`, { method: 'POST', headers })).json();
+    assert.equal(redone.jobId, 'job2', JSON.stringify(redone));
+    assert.equal(redone.status, 'fila');
+    assert.equal((await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).status, 404);
 
     state = 'concluido';
-    const done = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
+    const done = await (await fetch(`${url}/api/analysis/job2/refresh`, { method: 'POST', headers })).json();
     assert.equal(done.status, 'concluido');
     assert.equal(done.hasReport, true);
     assert.ok(done.completedAt >= done.startedAt);
 
-    const report = await fetch(`${url}/api/analysis/job1/report`, { headers });
+    const report = await fetch(`${url}/api/analysis/job2/report`, { headers });
     assert.match(await report.text(), /Relatório/);
     assert.match(report.headers.get('content-security-policy'), /sandbox/);
 

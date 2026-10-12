@@ -434,8 +434,9 @@ export function createApiServer({
     'UPDATE analysis_jobs SET completed_at = ? WHERE owner = ? AND job_id = ? AND completed_at IS NULL'
   );
   const startAnalysisJob = db.prepare(
-    `UPDATE analysis_jobs SET job_id = ?, status = ?, message = ?, consult_path = ?, report_path = ?, updated_at = ?, started_at = ?
-     WHERE owner = ? AND job_id = ? AND status = '${PENDING_STATUS}'`
+    `UPDATE analysis_jobs SET job_id = ?, status = ?, message = ?, consult_path = ?, report_path = ?, updated_at = ?, started_at = ?,
+     completed_at = NULL, report_html = NULL
+     WHERE owner = ? AND job_id = ? AND status = ?`
   );
   const deleteAnalysisJob = db.prepare(
     'DELETE FROM analysis_jobs WHERE owner = ? AND job_id = ?'
@@ -883,7 +884,7 @@ export function createApiServer({
         return;
       }
 
-      const jobMatch = pathname.match(/^\/api\/analysis\/([^/]+)\/(refresh|report|start|job)$/);
+      const jobMatch = pathname.match(/^\/api\/analysis\/([^/]+)\/(refresh|report|start|restart|job)$/);
       const jobId = jobMatch ? decodeURIComponent(jobMatch[1]) : '';
       if (jobMatch && ANALYSIS_JOB_ID.test(jobId)) {
         const row = getAnalysisJob.get(session.username, jobId);
@@ -892,12 +893,15 @@ export function createApiServer({
           return;
         }
 
-        if (request.method === 'POST' && jobMatch[2] === 'start') {
+        if (request.method === 'POST' && (jobMatch[2] === 'start' || jobMatch[2] === 'restart')) {
           if (hasCrossSiteFetch(request)) {
             jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
             return;
           }
-          if (row.status !== PENDING_STATUS) {
+          const startable = jobMatch[2] === 'start'
+            ? row.status === PENDING_STATUS
+            : classifyAnalysisStatus(row.status) === 'failed';
+          if (!startable) {
             jsonResponse(response, 200, serializeAnalysisJob(row));
             return;
           }
@@ -924,7 +928,7 @@ export function createApiServer({
               newId,
               typeof started.status === 'string' && started.status.trim() ? started.status.trim().slice(0, 100) : 'fila',
               typeof started.mensagem === 'string' ? started.mensagem.slice(0, 2000) : null,
-              consultPath, reportPath, Date.now(), Date.now(), session.username, jobId
+              consultPath, reportPath, Date.now(), Date.now(), session.username, jobId, row.status
             );
             jsonResponse(response, 200, serializeAnalysisJob(getAnalysisJob.get(session.username, newId)));
           } catch (error) {

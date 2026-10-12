@@ -1194,6 +1194,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       setAnalysisJobs(current => current.map(item => (item.jobId === oldId ? job : item)));
     const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
+    let failedStarts = 0;
     setBatchRunning(true);
     setBatchError(null);
     try {
@@ -1203,8 +1204,9 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         try {
           current = await beginAnalysis(id);
         } catch (err) {
-          setBatchError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
-          return;
+          failedStarts += 1;
+          setBatchError(`${failedStarts} análise(s) não puderam ser iniciadas e foram puladas. Último erro: ${err instanceof Error ? err.message : 'falha ao iniciar.'}`);
+          continue;
         }
         replace(id, current);
 

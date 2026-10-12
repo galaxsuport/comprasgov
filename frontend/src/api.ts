@@ -170,6 +170,12 @@ export async function beginAnalysis(jobId: string): Promise<AnalysisJob> {
   return response.json() as Promise<AnalysisJob>;
 }
 
+export async function restartAnalysis(jobId: string): Promise<AnalysisJob> {
+  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/restart`, { method: 'POST' });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return response.json() as Promise<AnalysisJob>;
+}
+
 export async function removeAnalysis(jobId: string): Promise<void> {
   const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/job`, { method: 'DELETE' });
   if (!response.ok) throw new Error(await readApiError(response));
