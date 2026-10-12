@@ -648,7 +648,8 @@ function Header({
   onToggleDiscarded,
   onToggleAnalysis,
   onToggleSettings,
-  onLogout
+  onLogout,
+  showLogout
 }: {
   branding: Branding;
   showFavorites: boolean;
@@ -664,6 +665,7 @@ function Header({
   onToggleAnalysis: () => void;
   onToggleSettings: () => void;
   onLogout: () => void;
+  showLogout: boolean;
 }) {
   return (
     <header className="hero">
@@ -725,9 +727,11 @@ function Header({
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
       </button>
-      <button type="button" className="logout-button" onClick={onLogout}>
+      {showLogout ? (
+        <button type="button" className="logout-button" onClick={onLogout}>
         Sair
       </button>
+      ) : null}
       <p className="hero-copy">{branding.subtitle}</p>
     </header>
   );
@@ -997,7 +1001,7 @@ function CountdownSpinner() {
   );
 }
 
-function Dashboard({ onLogout }: { onLogout: () => void }) {
+function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout: () => void }) {
   const [resultados, setResultados] = useState<PregaoResultado[]>([]);
   const [favorites, setFavorites] = useState<OportunidadeResultado[]>([]);
   const [favoritesLoading, setFavoritesLoading] = useState(true);
@@ -1235,6 +1239,15 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       if (!params) throw new Error('UASG ou número da compra indisponível para esta proposta.');
       const job = await enqueueAnalysis({ ...result, ...params });
       setAnalysisJobId(job.jobId);
+      const key = getFavoriteKey(result);
+      if (key && !favorites.some(item => getFavoriteKey(item) === key)) {
+        try {
+          const saved = await addFavorite(result);
+          setFavorites(current => [saved, ...current.filter(item => getFavoriteKey(item) !== key)]);
+        } catch {
+          setFavoriteError('A análise foi incluída, mas não foi possível salvar o favorito.');
+        }
+      }
       setAnalysisJobs(await fetchAnalyses().catch(() => analysisJobs));
     } catch (err) {
       setFavoriteError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
@@ -1352,6 +1365,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             setSettingsOpen(current => !current);
           }}
           onLogout={handleLogout}
+          showLogout={authRequired}
         />
 
         {analysisOpen && !settingsOpen ? (
@@ -1438,6 +1452,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 function App() {
   const [authState, setAuthState] = useState<'checking' | 'authenticated' | 'unauthenticated' | 'error'>('checking');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -1445,9 +1460,10 @@ function App() {
     fetch('/api/auth/session')
       .then(async response => {
         if (!response.ok) throw new Error('Não foi possível verificar sua sessão.');
-        return response.json() as Promise<{ authenticated: boolean }>;
+        return response.json() as Promise<{ authenticated: boolean; authRequired?: boolean }>;
       })
-      .then(({ authenticated }) => {
+      .then(({ authenticated, authRequired: required }) => {
+        setAuthRequired(required !== false);
         if (!cancelled) setAuthState(authenticated ? 'authenticated' : 'unauthenticated');
       })
       .catch(err => {
@@ -1498,7 +1514,7 @@ function App() {
     );
   }
 
-  return <Dashboard onLogout={() => setAuthState('unauthenticated')} />;
+  return <Dashboard authRequired={authRequired} onLogout={() => setAuthState('unauthenticated')} />;
 }
 
 export default App;

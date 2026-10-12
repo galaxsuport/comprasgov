@@ -69,7 +69,7 @@ test('requires authentication and creates an HttpOnly session', async () => {
   assert.ok(cookie);
 
   const session = await fetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: cookie } });
-  assert.deepEqual(await session.json(), { authenticated: true });
+  assert.deepEqual(await session.json(), { authenticated: true, authRequired: true });
 });
 
 test('serves the frontend for page routes and rejects missing assets', async () => {
@@ -525,5 +525,20 @@ test('runs an analysis job, tracks its status and stores the report', async () =
     await new Promise(resolve => api.close(resolve));
     await new Promise(resolve => n8n.close(resolve));
     analysisDb.close();
+  }
+});
+
+test('skips login when authentication is disabled for homologation', async () => {
+  const openDb = new Database(':memory:');
+  const open = createApiServer({ db: openDb, staticDir, webhookUrl, authDisabled: true });
+  await new Promise(resolve => open.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${open.address().port}`;
+  try {
+    const session = await (await fetch(`${url}/api/auth/session`)).json();
+    assert.deepEqual(session, { authenticated: true, authRequired: false });
+    assert.equal((await fetch(`${url}/api/favorites`)).status, 200);
+  } finally {
+    await new Promise(resolve => open.close(resolve));
+    openDb.close();
   }
 });

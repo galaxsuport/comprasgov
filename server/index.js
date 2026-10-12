@@ -21,6 +21,8 @@ const server = createApiServer({
   defaultDeadlineDays: Number.isInteger(deadlineFromEnv) && deadlineFromEnv >= 1 && deadlineFromEnv <= 15
     ? deadlineFromEnv
     : undefined,
+  // Em homologação (APP_ENV=homologacao) o acesso é liberado sem login.
+  authDisabled: process.env.APP_ENV === 'homologacao',
   username: process.env.AUTH_USERNAME,
   password: process.env.AUTH_PASSWORD,
   staticDir: process.env.STATIC_DIR ?? resolve(serverDir, '../frontend/dist'),

@@ -40,6 +40,10 @@ A senha pode ser alterada em Configurações. A nova senha é guardada com hash 
 
 Em cada consulta a `/api/pregoes`, o servidor anexa ao webhook as configurações da conta autenticada: `prazo` (dias, 1 a 15; padrão `DEADLINE_DEFAULT_DAYS`) e `termosFortes`, `termosContextuais`, `contextosTecnologicos` e `termosExclusao` (listas separadas por vírgula). Esses valores prevalecem sobre os enviados pelo navegador.
 
+### Homologação sem login
+
+Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de login e o botão Sair, e usa a conta `AUTH_USERNAME` (ou `homologacao`) para guardar favoritos, descartadas e análises. `AUTH_USERNAME` e `AUTH_PASSWORD` deixam de ser obrigatórios. **Nunca defina essa variável em produção**: qualquer pessoa com acesso à URL passa a usar o app.
+
 ### Análise de editais
 
 O botão **Analisar** do card envia `{ "UASG", "numeroCompra" }` por POST ao endpoint `ANALYSIS_WEBHOOK_URL`, com o cabeçalho `X-Workflow-Key` definido por `ANALYSIS_WORKFLOW_KEY` (a chave fica só no servidor). O `job_id` e os dados do card são gravados no banco; a tela de análises consulta o endpoint `consultar` a cada 5 s para atualizar `status` e `mensagem` e, ao concluir, guarda o HTML de `relatorioHtml`, aberto em `/api/analysis/<job_id>/report` dentro de um sandbox sem scripts.

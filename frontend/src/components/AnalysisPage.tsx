@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import TimeRemaining from './TimeRemaining';
 import { beginAnalysis, fetchAnalyses, refreshAnalysis, removeAnalysis, restartAnalysis, type AnalysisJob } from '../api';
 
 const POLL_INTERVAL_MS = 5000;
@@ -155,6 +156,10 @@ export default function AnalysisPage({
             <dl>
               <dt>job_id</dt>
               <dd>{job.jobId}</dd>
+              <dt>valor do edital</dt>
+              <dd>{job.proposal.valor ?? '—'}</dd>
+              <dt>tempo restante</dt>
+              <dd><TimeRemaining deadline={job.proposal.dataEncerramentoProposta} /></dd>
               <dt>mensagem</dt>
               <dd>{job.message ?? '—'}</dd>
               {job.completedAt ? (

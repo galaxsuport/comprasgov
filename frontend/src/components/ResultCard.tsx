@@ -1,4 +1,5 @@
 import { getAnalysisParams } from '../api';
+import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
 interface ResultCardProps {
@@ -18,20 +19,6 @@ function isOportunidade(result: PregaoResultado): result is OportunidadeResultad
 
 function isResumo(result: PregaoResultado): result is ResumoResultado {
   return result.tipoSaida === 'resumo';
-}
-
-function formatTempoRestante(dataEncerramento: string | null): string {
-  if (!dataEncerramento) return '—';
-
-  const encerramento = new Date(dataEncerramento).getTime();
-  if (Number.isNaN(encerramento)) return '—';
-
-  const minutosRestantes = Math.max(0, Math.floor((encerramento - Date.now()) / 60000));
-  const dias = Math.floor(minutosRestantes / 1440);
-  const horas = Math.floor((minutosRestantes % 1440) / 60);
-  const minutos = minutosRestantes % 60;
-
-  return `${dias} ${dias === 1 ? 'dia' : 'dias'}, ${horas} ${horas === 1 ? 'hora' : 'horas'} e ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'} restantes`;
 }
 
 export default function ResultCard({
@@ -155,7 +142,7 @@ export default function ResultCard({
         </div>
         <div>
           <span>Tempo restante</span>
-          <strong>{formatTempoRestante(result.dataEncerramentoProposta)}</strong>
+          <strong><TimeRemaining deadline={result.dataEncerramentoProposta} /></strong>
         </div>
       </div>
 

@@ -268,10 +268,13 @@ export function createApiServer({
   webhookUrl,
   analysisWebhookUrl,
   analysisWorkflowKey,
+  authDisabled = false,
   defaultDeadlineDays = DEFAULT_DEADLINE_DAYS,
   secureCookies = process.env.NODE_ENV === 'production'
 }) {
-  if (!username || !password) {
+  if (authDisabled) {
+    username = username || 'homologacao';
+  } else if (!username || !password) {
     throw new Error('Configure AUTH_USERNAME e AUTH_PASSWORD no ambiente do servidor.');
   }
 
@@ -514,6 +517,7 @@ export function createApiServer({
   const cookieOptions = `Path=/; HttpOnly; SameSite=Strict${secureCookies ? '; Secure' : ''}`;
 
   function getSession(request) {
+    if (authDisabled) return { username, expiresAt: Number.MAX_SAFE_INTEGER };
     const token = parseCookies(request.headers.cookie).get(SESSION_COOKIE);
     if (!token) return null;
     const session = sessions.get(token);
@@ -533,7 +537,7 @@ export function createApiServer({
     const { pathname } = url;
 
     if (pathname === '/api/auth/session' && request.method === 'GET') {
-      jsonResponse(response, 200, { authenticated: Boolean(getSession(request)) });
+      jsonResponse(response, 200, { authenticated: Boolean(getSession(request)), authRequired: !authDisabled });
       return;
     }
 
@@ -546,6 +550,10 @@ export function createApiServer({
     }
 
     if (pathname === '/api/auth/login' && request.method === 'POST') {
+      if (authDisabled) {
+        jsonResponse(response, 200, { authenticated: true });
+        return;
+      }
       if (hasCrossSiteFetch(request)) {
         jsonResponse(response, 403, { error: 'Requisição de outra origem bloqueada.' });
         return;
