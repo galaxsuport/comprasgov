@@ -10,6 +10,7 @@ import {
   unregisterProposal,
   beginAnalysis,
   enqueueAnalysis,
+  removeAnalysis,
   refreshAnalysis,
   fetchAnalyses,
   fetchResultados,
@@ -682,7 +683,6 @@ function Header({
           <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           <polyline points="9 22 9 12 15 12 15 22" />
         </svg>
-        <span>Home</span>
       </button>
       <button
         type="button"
@@ -984,6 +984,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
+  const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
   const analysisCount = analysisJobs.length;
   const analysisDoneCount = analysisJobs.filter(job => /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status)).length;
   const [batchRunning, setBatchRunning] = useState(false);
@@ -1221,14 +1222,59 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     }
   };
 
+  const trackAnalysis = async (initialJob: AnalysisJob) => {
+    let current = initialJob;
+    const isFinished = (status: string) =>
+      /erro|falha|fail|cancel|conclu|finaliz|pronto|sucesso|complet|done/i.test(status);
+
+    while (mountedRef.current && !isFinished(current.status)) {
+      await new Promise(resolve => window.setTimeout(resolve, 2000));
+      try {
+        current = await refreshAnalysis(current.jobId);
+        if (mountedRef.current) {
+          setAnalysisJobs(jobs => jobs.map(job => job.jobId === current.jobId ? current : job));
+        }
+      } catch (err) {
+        if (mountedRef.current) {
+          setFavoriteError(err instanceof Error ? err.message : 'Não foi possível acompanhar a análise.');
+          setAnalysisJobs(jobs => jobs.map(job => job.jobId === current.jobId
+            ? { ...job, status: 'erro' }
+            : job
+          ));
+        }
+        return;
+      }
+    }
+  };
+
   const analyzeProposal = async (result: OportunidadeResultado) => {
     setFavoriteError(null);
+    const key = getFavoriteKey(result);
+    if (!key) {
+      setFavoriteError('Não foi possível identificar a proposta para análise.');
+      return;
+    }
+
+    setAnalysisStartingKeys(current => new Set(current).add(key));
     try {
       const params = getAnalysisParams(result);
       if (!params) throw new Error('UASG ou número da compra indisponível para esta proposta.');
-      const job = await enqueueAnalysis({ ...result, ...params });
+
+      const previousJob = analysisJobs.find(item => getFavoriteKey(item.proposal) === key);
+      if (previousJob) {
+        await removeAnalysis(previousJob.jobId);
+        setAnalysisJobs(current => current.filter(item => item.jobId !== previousJob.jobId));
+      }
+
+      const queuedJob = await enqueueAnalysis({ ...result, ...params });
+      const job = await beginAnalysis(queuedJob.jobId);
       setAnalysisJobId(job.jobId);
-      const key = getFavoriteKey(result);
+      setAnalysisJobs(current => [
+        job,
+        ...current.filter(item => item.jobId !== job.jobId && getFavoriteKey(item.proposal) !== key)
+      ]);
+      void trackAnalysis(job);
+
       if (key && !favorites.some(item => getFavoriteKey(item) === key)) {
         try {
           const saved = await addFavorite(result);
@@ -1237,9 +1283,14 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           setFavoriteError('A análise foi incluída, mas não foi possível salvar o favorito.');
         }
       }
-      setAnalysisJobs(await fetchAnalyses().catch(() => analysisJobs));
     } catch (err) {
       setFavoriteError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+    } finally {
+      setAnalysisStartingKeys(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
@@ -1383,10 +1434,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             onRunAll={() => void runAllAnalyses()}
             onJobsChange={setAnalysisJobs}
             onRegisterProposal={(job) => toggleRegisterProposal(job.proposal)}
-            onOpenCalendar={() => {
-              setAnalysisOpen(false);
-              setShowCalendar(true);
-            }}
             onBack={() => setAnalysisOpen(false)}
           />
         ) : settingsOpen ? (
@@ -1499,7 +1546,11 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
                     onToggleDiscard={toggleDiscard}
                     onAnalyze={analyzeProposal}
                     analysisLocked={batchRunning}
-                    analysisState={item.tipoSaida === 'oportunidade' ? analysisStates.get(getFavoriteKey(item) ?? '') : undefined}
+                    analysisState={item.tipoSaida === 'oportunidade'
+                      ? analysisStartingKeys.has(getFavoriteKey(item) ?? '')
+                        ? 'pending'
+                        : analysisStates.get(getFavoriteKey(item) ?? '')
+                      : undefined}
                   />
                 ))}
               </section>

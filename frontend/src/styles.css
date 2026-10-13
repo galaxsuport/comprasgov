@@ -1754,25 +1754,6 @@ body {
   cursor: not-allowed;
 }
 
-/* Agenda / Calendário */
-.calendar-toggle {
-  border-color: rgba(168, 85, 247, 0.4);
-  background: rgba(168, 85, 247, 0.08);
-  color: #c084fc;
-}
-
-.calendar-toggle:hover,
-.calendar-toggle.is-active {
-  border-color: rgba(168, 85, 247, 0.8);
-  background: rgba(168, 85, 247, 0.18);
-  color: #e9d5ff;
-}
-
-.calendar-toggle:focus-visible {
-  outline: 2px solid #a855f7;
-  outline-offset: 3px;
-}
-
 .calendar-page {
   width: 100%;
 }
@@ -2039,18 +2020,6 @@ body {
   border-color: rgba(168, 85, 247, 0.45);
   color: #f3e8ff;
   animation: fadeIn 0.3s ease;
-}
-
-.calendar-banner-btn {
-  border-color: #c084fc;
-  background: rgba(168, 85, 247, 0.2);
-  color: #ffffff;
-  white-space: nowrap;
-}
-
-.calendar-banner-btn:hover {
-  background: rgba(168, 85, 247, 0.35);
-  border-color: #e9d5ff;
 }
 
 /* Dashboard / Painel de Controle */
@@ -2492,4 +2461,3 @@ body {
   color: #38bdf8;
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
 }
-

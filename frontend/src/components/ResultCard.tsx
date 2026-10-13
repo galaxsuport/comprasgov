@@ -217,8 +217,8 @@ export default function ResultCard({
           type="button"
           className="discard-toggle analyze-link"
           onClick={() => onAnalyze?.(result)}
-          disabled={isDiscarded || analysisLocked || Boolean(analysisState) || !getAnalysisParams(result)}
-          title={analysisLocked && !analysisState ? 'Aguarde o fim da análise em sequência' : analysisState === 'done' ? 'Análise concluída' : analysisState ? 'Análise em andamento' : getAnalysisParams(result) ? 'Analisar edital' : 'UASG ou número da compra indisponível'}
+          disabled={isDiscarded || analysisLocked || analysisState === 'pending' || !getAnalysisParams(result)}
+          title={analysisLocked && !analysisState ? 'Aguarde o fim da análise em sequência' : analysisState === 'done' ? 'Excluir a análise anterior e iniciar novamente' : analysisState ? 'Análise em andamento' : getAnalysisParams(result) ? 'Analisar edital' : 'UASG ou número da compra indisponível'}
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             {analysisState === 'done' ? (
@@ -235,7 +235,7 @@ export default function ResultCard({
               </>
             )}
           </svg>
-          <span>{analysisState === 'done' ? 'Analisado' : analysisState ? 'Analisando' : 'Analisar'}</span>
+          <span>{analysisState === 'done' ? 'Refazer análise' : analysisState ? 'Analisando' : 'Analisar'}</span>
         </button>
         {proposalLink ? (
           <a

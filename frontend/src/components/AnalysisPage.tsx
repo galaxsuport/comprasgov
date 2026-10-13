@@ -39,7 +39,6 @@ export default function AnalysisPage({
   onRunAll,
   onJobsChange,
   onRegisterProposal,
-  onOpenCalendar,
   onBack
 }: {
   focusJobId: string | null;
@@ -49,7 +48,6 @@ export default function AnalysisPage({
   onRunAll: () => void;
   onJobsChange: (jobs: AnalysisJob[]) => void;
   onRegisterProposal?: (job: AnalysisJob) => Promise<void> | void;
-  onOpenCalendar?: () => void;
   onBack: () => void;
 }) {
   const [jobs, setJobs] = useState<AnalysisJob[]>([]);
@@ -202,15 +200,6 @@ export default function AnalysisPage({
       {successMessage ? (
         <div className="status-card status-success-banner" role="status">
           <span>{successMessage}</span>
-          {onOpenCalendar ? (
-            <button
-              type="button"
-              className="discard-toggle calendar-banner-btn"
-              onClick={onOpenCalendar}
-            >
-              Ver na agenda
-            </button>
-          ) : null}
         </div>
       ) : null}
       {loading ? <div className="status-card">Carregando análises...</div> : null}
@@ -305,22 +294,6 @@ export default function AnalysisPage({
                       ? 'Cadastrada'
                       : 'Proposta cadastrada'}
                   </span>
-                </button>
-              ) : null}
-              {!batchRunning && isRegistered && onOpenCalendar ? (
-                <button
-                  type="button"
-                  className="discard-toggle calendar-toggle"
-                  onClick={onOpenCalendar}
-                  title="Abrir agenda de propostas cadastradas"
-                >
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  <span>Ver na agenda</span>
                 </button>
               ) : null}
               {batchRunning ? null : job.status === 'pendente' ? (
