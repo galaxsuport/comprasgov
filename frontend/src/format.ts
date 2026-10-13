@@ -11,6 +11,29 @@ export function formatDateTime(isoString: string | null): string {
   });
 }
 
+export function formatBRL(value: number): string {
+  if (Number.isNaN(value) || !Number.isFinite(value)) return 'R$ 0,00';
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    maximumFractionDigits: 2
+  });
+}
+
+export function formatCompactBRL(value: number): string {
+  if (Number.isNaN(value) || !Number.isFinite(value) || value === 0) return 'R$ 0';
+  if (value >= 1_000_000_000) {
+    return `R$ ${(value / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} bi`;
+  }
+  if (value >= 1_000_000) {
+    return `R$ ${(value / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+  }
+  if (value >= 1_000) {
+    return `R$ ${(value / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} mil`;
+  }
+  return formatBRL(value);
+}
+
 export function formatTempoRestante(dataEncerramento: string | null): string {
   if (!dataEncerramento) return '—';
 

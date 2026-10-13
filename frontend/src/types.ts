@@ -49,3 +49,6 @@ export interface OportunidadeResultado {
 }
 
 export type PregaoResultado = ResumoResultado | OportunidadeResultado;
+
+export type SummaryFilter = 'dispensas' | 'pregao' | 'sigiloso' | 'srp' | null;
+

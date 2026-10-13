@@ -27,10 +27,11 @@ import {
   WebhookPopupError
 } from './api';
 import type { AnalysisJob } from './api';
-import type { OportunidadeResultado, PregaoResultado } from './types';
+import type { OportunidadeResultado, PregaoResultado, SummaryFilter } from './types';
 import ResultCard from './components/ResultCard';
 import AnalysisPage from './components/AnalysisPage';
 import CalendarPage from './components/CalendarPage';
+import { Dashboard as DashboardView } from './components/Dashboard';
 
 const LEGACY_FAVORITES_STORAGE_KEY = 'comprasgov:favorites';
 
@@ -72,7 +73,13 @@ const REGIOES = {
   Sul: ['PR', 'RS', 'SC']
 } as const;
 
-function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFilters) => void }) {
+function FilterControls({
+  onFilterChange,
+  loading
+}: {
+  onFilterChange: (filters: FetchFilters) => void;
+  loading: boolean;
+}) {
   const [ufs, setUfs] = useState<string[]>([]);
   const [uasg, setUasg] = useState('');
   const [uasgError, setUasgError] = useState<string | null>(null);
@@ -119,8 +126,6 @@ function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFil
   return (
     <aside className="sidebar">
       <section className="filter-controls">
-        <h3>Filtros</h3>
-
         <div className="filter-group">
           <label htmlFor="filter-uasg">UASG</label>
           <input
@@ -197,8 +202,12 @@ function FilterControls({ onFilterChange }: { onFilterChange: (filters: FetchFil
           </div>
         </div>
 
-        <button onClick={handleApplyFilters} className="btn-apply-filters">
-          Aplicar Filtros
+        <button
+          onClick={handleApplyFilters}
+          className="btn-apply-filters"
+          disabled={loading}
+        >
+          {loading ? 'Pesquisando...' : 'Aplicar'}
         </button>
       </section>
     </aside>
@@ -640,39 +649,17 @@ function SettingsPage({ favoritesCount, branding, onBrandingChange, onBack }: {
 
 function Header({
   branding,
-  showFavorites,
-  favoritesCount,
-  showCalendar,
-  registeredCount,
-  showDiscarded,
-  discardedCount,
-  analysisOpen,
-  analysisCount,
-  analysisDoneCount,
+  isHome,
+  onGoHome,
   settingsOpen,
-  onToggleFavorites,
-  onToggleCalendar,
-  onToggleDiscarded,
-  onToggleAnalysis,
   onToggleSettings,
   onLogout,
   showLogout
 }: {
   branding: Branding;
-  showFavorites: boolean;
-  favoritesCount: number;
-  showCalendar: boolean;
-  registeredCount: number;
-  showDiscarded: boolean;
-  discardedCount: number;
-  analysisOpen: boolean;
-  analysisCount: number;
-  analysisDoneCount: number;
+  isHome: boolean;
+  onGoHome: () => void;
   settingsOpen: boolean;
-  onToggleFavorites: () => void;
-  onToggleCalendar: () => void;
-  onToggleDiscarded: () => void;
-  onToggleAnalysis: () => void;
   onToggleSettings: () => void;
   onLogout: () => void;
   showLogout: boolean;
@@ -685,60 +672,17 @@ function Header({
       </div>
       <button
         type="button"
-        className={`favorites-toggle${showFavorites ? ' is-active' : ''}`}
-        onClick={onToggleFavorites}
-        aria-pressed={showFavorites}
-        aria-label={`${showFavorites ? 'Voltar aos resultados' : 'Abrir favoritos'}, ${favoritesCount} salvos`}
-        title={showFavorites ? 'Voltar aos resultados' : 'Abrir favoritos'}
-      >
-        <span className="favorites-toggle-icon" aria-hidden="true">★</span>
-        <span className="favorites-count" aria-hidden="true">{favoritesCount}</span>
-      </button>
-      <button
-        type="button"
-        className={`discarded-toggle calendar-toggle${showCalendar ? ' is-active' : ''}`}
-        onClick={onToggleCalendar}
-        aria-pressed={showCalendar}
-        aria-label={`${showCalendar ? 'Voltar aos resultados' : 'Abrir agenda'}, ${registeredCount} propostas cadastradas`}
-        title={showCalendar ? 'Voltar aos resultados' : 'Abrir agenda de propostas cadastradas'}
+        className={`home-toggle${isHome ? ' is-active' : ''}`}
+        onClick={onGoHome}
+        aria-pressed={isHome}
+        aria-label="Ir para a tela inicial / Dashboard"
+        title="Tela inicial / Dashboard"
       >
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-          <line x1="16" y1="2" x2="16" y2="6" />
-          <line x1="8" y1="2" x2="8" y2="6" />
-          <line x1="3" y1="10" x2="21" y2="10" />
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
         </svg>
-        <span className="favorites-count" aria-hidden="true">{registeredCount}</span>
-      </button>
-      <button
-        type="button"
-        className={`discarded-toggle${showDiscarded ? ' is-active' : ''}`}
-        onClick={onToggleDiscarded}
-        aria-pressed={showDiscarded}
-        aria-label={`${showDiscarded ? 'Voltar aos resultados' : 'Abrir descartadas'}, ${discardedCount} descartadas`}
-        title={showDiscarded ? 'Voltar aos resultados' : 'Abrir descartadas'}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M3 6h18" />
-          <path d="M8 6V4h8v2" />
-          <path d="M19 6l-1 14H6L5 6" />
-          <path d="M10 11v6M14 11v6" />
-        </svg>
-        <span className="favorites-count" aria-hidden="true">{discardedCount}</span>
-      </button>
-      <button
-        type="button"
-        className={`discarded-toggle analysis-toggle${analysisOpen ? ' is-active' : ''}`}
-        onClick={onToggleAnalysis}
-        aria-pressed={analysisOpen}
-        aria-label={`${analysisOpen ? 'Voltar aos resultados' : 'Abrir análises'}, ${analysisDoneCount} de ${analysisCount} analisadas`}
-        title={analysisOpen ? 'Voltar aos resultados' : 'Abrir análises'}
-      >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4.3-4.3" />
-        </svg>
-        <span className="favorites-count" aria-hidden="true">{analysisDoneCount}/{analysisCount}</span>
+        <span>Home</span>
       </button>
       <button
         type="button"
@@ -762,8 +706,6 @@ function Header({
     </header>
   );
 }
-
-type SummaryFilter = 'dispensas' | 'pregao' | 'sigiloso' | 'srp' | null;
 
 function matchesSummaryFilter(result: PregaoResultado, filter: SummaryFilter): boolean {
   if (!filter) return true;
@@ -1027,7 +969,7 @@ function CountdownSpinner() {
   );
 }
 
-function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout: () => void }) {
+function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: () => void }) {
   const [resultados, setResultados] = useState<PregaoResultado[]>([]);
   const [favorites, setFavorites] = useState<OportunidadeResultado[]>([]);
   const [favoritesLoading, setFavoritesLoading] = useState(true);
@@ -1392,7 +1334,7 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
 
   return (
     <div className="app-layout">
-      <FilterControls onFilterChange={handleFilterChange} />
+      <FilterControls onFilterChange={handleFilterChange} loading={loading} />
 
       {popupError ? (
         <WebhookErrorPopup
@@ -1406,44 +1348,17 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
       <main className="page-shell">
         <Header
           branding={branding}
-          showFavorites={showFavorites}
-          favoritesCount={favorites.length}
-          showCalendar={showCalendar}
-          registeredCount={registered.length}
-          showDiscarded={showDiscarded}
-          discardedCount={discarded.length}
-          analysisOpen={analysisOpen}
-          analysisCount={analysisCount}
-          analysisDoneCount={analysisDoneCount}
-          onToggleAnalysis={() => {
-            setSettingsOpen(false);
+          isHome={!showFavorites && !showCalendar && !showDiscarded && !analysisOpen && !settingsOpen}
+          onGoHome={() => {
             setShowFavorites(false);
             setShowCalendar(false);
             setShowDiscarded(false);
-            setAnalysisOpen(current => !current);
+            setAnalysisOpen(false);
+            setSettingsOpen(false);
+            setSummaryFilter(null);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           settingsOpen={settingsOpen}
-          onToggleFavorites={() => {
-            setAnalysisOpen(false);
-            setSettingsOpen(false);
-            setShowCalendar(false);
-            setShowDiscarded(false);
-            setShowFavorites(current => !current);
-          }}
-          onToggleCalendar={() => {
-            setAnalysisOpen(false);
-            setSettingsOpen(false);
-            setShowFavorites(false);
-            setShowDiscarded(false);
-            setShowCalendar(current => !current);
-          }}
-          onToggleDiscarded={() => {
-            setAnalysisOpen(false);
-            setSettingsOpen(false);
-            setShowFavorites(false);
-            setShowCalendar(false);
-            setShowDiscarded(current => !current);
-          }}
           onToggleSettings={() => {
             setAnalysisOpen(false);
             setShowCalendar(false);
@@ -1507,15 +1422,58 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
           </div>
         ) : null}
 
+        {!showFavorites && !showDiscarded ? (
+          <DashboardView
+            results={resultados}
+            favorites={favorites}
+            registered={registered}
+            discarded={discarded}
+            analysisJobs={analysisJobs}
+            activeFilter={summaryFilter}
+            onSelectFilter={handleSummaryFilterChange}
+            onOpenFavorites={() => {
+              setAnalysisOpen(false);
+              setSettingsOpen(false);
+              setShowCalendar(false);
+              setShowDiscarded(false);
+              setShowFavorites(true);
+            }}
+            onOpenCalendar={() => {
+              setAnalysisOpen(false);
+              setSettingsOpen(false);
+              setShowFavorites(false);
+              setShowDiscarded(false);
+              setShowCalendar(true);
+            }}
+            onOpenAnalysis={() => {
+              setSettingsOpen(false);
+              setShowFavorites(false);
+              setShowCalendar(false);
+              setShowDiscarded(false);
+              setAnalysisOpen(true);
+            }}
+            onOpenDiscarded={() => {
+              setAnalysisOpen(false);
+              setSettingsOpen(false);
+              setShowFavorites(false);
+              setShowCalendar(false);
+              setShowDiscarded(true);
+            }}
+            getProposalKey={getFavoriteKey}
+          />
+        ) : null}
+
         {baseResults.length > 0 ? (
           <>
-            <Summary
-              results={summaryResults}
-              favoritesView={showFavorites}
-              discardedView={showDiscarded}
-              activeFilter={summaryFilter}
-              onSelectFilter={handleSummaryFilterChange}
-            />
+            {showFavorites || showDiscarded ? (
+              <Summary
+                results={summaryResults}
+                favoritesView={showFavorites}
+                discardedView={showDiscarded}
+                activeFilter={summaryFilter}
+                onSelectFilter={handleSummaryFilterChange}
+              />
+            ) : null}
             {visibleResults.length > 0 ? (
               <section className="cards-shell">
                 {visibleResults.map((item, index) => (
@@ -1527,6 +1485,15 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
                     isFavorite={item.tipoSaida === 'oportunidade'
                       && favorites.some(favorite => getFavoriteKey(favorite) === getFavoriteKey(item))}
                     onToggleFavorite={toggleFavorite}
+                    isRegistered={item.tipoSaida === 'oportunidade'
+                      && registeredKeys.has(getFavoriteKey(item) ?? '')}
+                    onOpenCalendar={() => {
+                      setAnalysisOpen(false);
+                      setSettingsOpen(false);
+                      setShowFavorites(false);
+                      setShowDiscarded(false);
+                      setShowCalendar(true);
+                    }}
                     isDiscarded={item.tipoSaida === 'oportunidade'
                       && discardedKeys.has(getFavoriteKey(item) ?? '')}
                     onToggleDiscard={toggleDiscard}
@@ -1542,7 +1509,7 @@ function Dashboard({ authRequired, onLogout }: { authRequired: boolean; onLogout
           </>
         ) : !loading && !error ? (
           <div className="status-card">
-            {showDiscarded ? 'Nenhuma proposta descartada.' : showFavorites ? 'Nenhum favorito salvo.' : 'Nenhum resultado disponível.'}
+            {showDiscarded ? 'Nenhuma proposta descartada.' : showFavorites ? 'Nenhum favorito salvo.' : 'Nenhum resultado carregado ainda. Selecione os filtros na barra lateral e clique em Pesquisar.'}
           </div>
         ) : null}
         </>
@@ -1618,7 +1585,7 @@ function App() {
     );
   }
 
-  return <Dashboard authRequired={authRequired} onLogout={() => setAuthState('unauthenticated')} />;
+  return <MainApp authRequired={authRequired} onLogout={() => setAuthState('unauthenticated')} />;
 }
 
 export default App;

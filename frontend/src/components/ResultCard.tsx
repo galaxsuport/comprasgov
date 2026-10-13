@@ -9,6 +9,8 @@ interface ResultCardProps {
   result: PregaoResultado;
   isFavorite?: boolean;
   onToggleFavorite?: (result: OportunidadeResultado) => void;
+  isRegistered?: boolean;
+  onOpenCalendar?: () => void;
   isDiscarded?: boolean;
   onToggleDiscard?: (result: OportunidadeResultado) => void;
   onAnalyze?: (result: OportunidadeResultado) => void;
@@ -28,6 +30,8 @@ export default function ResultCard({
   result,
   isFavorite = false,
   onToggleFavorite,
+  isRegistered = false,
+  onOpenCalendar,
   isDiscarded = false,
   onToggleDiscard,
   onAnalyze,
@@ -115,17 +119,33 @@ export default function ResultCard({
             {result.modoDisputa ? <span className="badge">{result.modoDisputa}</span> : null}
           </div>
         </div>
-        <button
-          type="button"
-          className="favorite-card-toggle"
-          onClick={() => onToggleFavorite?.(result)}
-          aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-          aria-pressed={isFavorite}
-          title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-          disabled={!result.idContratacaoPNCP && !result.linkContratacao}
-        >
-          <span aria-hidden="true">{isFavorite ? '★' : '☆'}</span>
-        </button>
+        <div className="card-header-actions">
+          <button
+            type="button"
+            className="favorite-card-toggle"
+            onClick={() => onToggleFavorite?.(result)}
+            aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+            aria-pressed={isFavorite}
+            title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+            disabled={!result.idContratacaoPNCP && !result.linkContratacao}
+          >
+            <span aria-hidden="true">{isFavorite ? '★' : '☆'}</span>
+          </button>
+          {isRegistered && onOpenCalendar ? (
+            <button
+              type="button"
+              className="calendar-card-toggle"
+              onClick={onOpenCalendar}
+              aria-label="Abrir agenda de propostas cadastradas"
+              title="Abrir agenda de propostas cadastradas"
+            >
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="16" rx="2" />
+                <path d="M16 3v4M8 3v4M3 10h18" />
+              </svg>
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="card-grid">
