@@ -24,6 +24,10 @@ EXTRACTOR_API_KEY=chave-privada-do-extrator
 
 Confirme o endereço interno do extrator antes de usar o exemplo.
 Não publique chaves nem credenciais no repositório.
+Nesta implantação, a conexão interna reutiliza a credencial `X-API-Key` do
+extrator, conforme autorizado: `COPILOT_SERVICE_KEY` e `EXTRACTOR_API_KEY` têm
+o mesmo valor, sem alterar a credencial existente no n8n. O login GitHub é
+independente dessa chave.
 
 No console, como usuário `node`, autentique:
 
