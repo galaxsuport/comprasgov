@@ -32,7 +32,7 @@ export function createExtractorTools({ baseUrl, apiKey, jobId, fetchImpl = fetch
       ...init,
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       redirect: 'error',
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(330000)]) : AbortSignal.timeout(330000)
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(960000)]) : AbortSignal.timeout(960000)
     });
     if (!response.ok) throw new Error(`Ferramenta do extrator respondeu HTTP ${response.status}.`);
     return response.json();
@@ -81,7 +81,7 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
   if (!apiKey || apiKey.length < 32) throw new Error('COPILOT_SERVICE_KEY deve ter pelo menos 32 caracteres.');
   if (!model || !extractorUrl || !extractorApiKey) throw new Error('Modelo e integração do extrator são obrigatórios.');
   const keyHash = createHash('sha256').update(apiKey).digest();
-  let active = null;
+  const active = new Set();
   async function extractor(jobId, method) {
     const result = await fetchImpl(new URL(`/jobs/${jobId}`, extractorUrl), {
       method, headers: { 'X-API-Key': extractorApiKey }, redirect: 'error', signal: AbortSignal.timeout(30000)
@@ -111,9 +111,11 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
         const jobId = cancellation[1];
         const deleted = await extractor(jobId, 'DELETE');
         if (deleted.cancelled !== true || deleted.job_id !== jobId) throw new Error('Extrator não confirmou a remoção do job.');
-        const current = active?.jobId === jobId ? active : null;
-        if (current) {
+        const pending = [...active].filter(item => item.jobId === jobId);
+        for (const current of pending) {
           current.controller.abort(new Error('Análise cancelada pelo usuário.'));
+        }
+        for (const current of pending) {
           let timer;
           try {
             await Promise.race([
@@ -134,11 +136,12 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
       }
       return;
     }
-    if (request.method !== 'POST' || request.url !== '/analyze') {
+    const completion = request.url === '/complete';
+    if (request.method !== 'POST' || (!completion && request.url !== '/analyze')) {
       send(response, 404, { error: 'Recurso não encontrado.' });
       return;
     }
-    if (active) {
+    if ([...active].some(item => item.completion === completion)) {
       send(response, 429, { error: 'Uma análise está em andamento. Aguarde a conclusão antes de iniciar outra.' });
       return;
     }
@@ -149,22 +152,34 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
         || typeof body?.systemMessage !== 'string' || !body.systemMessage.trim()) {
         throw new Error('Informe job_id, prompt e systemMessage válidos.');
       }
+      if (completion && !['summary', 'research'].includes(body.purpose)) {
+        throw new Error('Informe purpose summary ou research.');
+      }
+      if (completion && body.purpose === 'research' && !['oficial', 'fabricante'].includes(body.scope)) {
+        throw new Error('Informe scope oficial ou fabricante.');
+      }
     } catch (error) {
       send(response, 400, { error: error.message });
       return;
     }
-    if (active) {
+    if ([...active].some(item => item.completion === completion)) {
       send(response, 429, { error: 'Uma análise está em andamento.' });
       return;
     }
     let finish;
     const current = {
-      jobId: body.job_id, controller: new AbortController(),
+      jobId: body.job_id, completion, controller: new AbortController(),
       finished: new Promise(resolve => { finish = resolve; }), session: null, cleanupError: null
     };
-    active = current;
+    active.add(current);
     const { signal } = current.controller;
+    const closed = () => {
+      if (!response.writableEnded) current.controller.abort(new Error('Solicitação interrompida pelo cliente.'));
+    };
+    response.on('close', closed);
     let session;
+    let reply;
+    let status = 200;
     try {
       await extractor(body.job_id, 'GET');
       signal.throwIfAborted();
@@ -172,19 +187,42 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
       signal.throwIfAborted();
       if (!(await client.listModels()).some(item => item.id === model)) throw new Error(`Modelo ${model} indisponível para esta conta.`);
       signal.throwIfAborted();
-      const tools = createExtractorTools({ baseUrl: extractorUrl, apiKey: extractorApiKey, jobId: body.job_id, fetchImpl, signal });
+      const researching = completion && body.purpose === 'research';
+      const tools = completion ? [] : createExtractorTools({ baseUrl: extractorUrl, apiKey: extractorApiKey, jobId: body.job_id, fetchImpl, signal });
+      const webTools = researching ? ['web_search', 'web_fetch'] : [];
       session = await client.createSession({
         model,
         tools,
-        availableTools: tools.map(tool => tool.name),
+        availableTools: [...tools.map(tool => tool.name), ...webTools],
         onPermissionRequest: async request => ({
-          kind: request.kind === 'custom-tool' && tools.some(tool => tool.name === request.toolName)
+          kind: ((request.kind === 'custom-tool' && tools.some(tool => tool.name === request.toolName))
+            || (researching && request.kind === 'url' && researchUrl(request.url, body.scope)))
             && !request.managedApprovalRequired ? 'approve-once' : 'reject'
         }),
         systemMessage: { mode: 'replace', content: body.systemMessage },
         streaming: true
       });
       current.session = session;
+      const evidenceUrls = new Set();
+      if (researching) {
+        const webCalls = new Map();
+        session.on('tool.execution_start', event => {
+          if (webTools.includes(event.data.toolName)) webCalls.set(event.data.toolCallId, event.data);
+        });
+        session.on('tool.execution_complete', event => {
+          const call = webCalls.get(event.data.toolCallId);
+          if (!event.data.success || !call) return;
+          if (call.toolName === 'web_fetch') {
+            const url = call.arguments?.url;
+            if (researchUrl(url, body.scope)) evidenceUrls.add(url);
+            return;
+          }
+          for (const match of JSON.stringify(event.data.result ?? {}).matchAll(/https?:\/\/[^\s"<>\\]+/g)) {
+            const url = match[0].replace(/[),.;]+$/, '');
+            if (researchUrl(url, body.scope)) evidenceUrls.add(url);
+          }
+        });
+      }
       signal.throwIfAborted();
       let rejectCancelled;
       const cancelled = new Promise((resolve, reject) => { rejectCancelled = () => reject(signal.reason); });
@@ -198,7 +236,8 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
       signal.throwIfAborted();
       const output = result?.data?.content;
       if (typeof output !== 'string' || !output.trim()) throw new Error('Copilot retornou um relatório vazio.');
-      send(response, 200, { job_id: body.job_id, model, output });
+      if (researching && !evidenceUrls.size) throw new Error('Copilot não retornou evidência de pesquisa web executada com fontes permitidas.');
+      reply = { job_id: body.job_id, model, output, ...(researching ? { evidence_urls: [...evidenceUrls] } : {}) };
     } catch (error) {
       console.error(`Análise Copilot ${body.job_id} falhou:`, error.message);
       if (session) {
@@ -207,16 +246,36 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
           console.error('Falha ao cancelar a sessão:', abortError.message);
         }
       }
-      send(response, 502, { error: error.message, job_id: body.job_id });
+      status = 502;
+      reply = { error: error.message, job_id: body.job_id };
     } finally {
       if (session) {
         try { await session.disconnect(); } catch (error) {
           current.cleanupError = error;
           console.error('Falha ao encerrar a sessão:', error.message);
+          status = 502;
+          reply = { error: 'Falha ao encerrar a sessão Copilot.', job_id: body.job_id };
         }
       }
-      active = null;
+      response.off('close', closed);
+      active.delete(current);
       finish();
+    }
+    if (!response.destroyed) send(response, status, reply);
+
+    function researchUrl(value, scope) {
+      try {
+        const url = new URL(value);
+        if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+        const host = url.hostname.toLowerCase();
+        if (scope === 'oficial') {
+          return ['gov.br', 'comprasnet.gov.br', 'serpro.gov.br'].some(domain => host === domain || host.endsWith(`.${domain}`));
+        }
+        return host.includes('.') && !/^[\d.]+$/.test(host) && !host.includes(':')
+          && !['localhost', 'local', 'internal', 'test'].some(domain => host === domain || host.endsWith(`.${domain}`));
+      } catch {
+        return false;
+      }
     }
   });
 }

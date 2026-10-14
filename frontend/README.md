@@ -3,10 +3,53 @@
 Este projeto exibe os resultados do endpoint n8n diretamente em uma interface moderna.
 
 A situação do edital aparece nos badges do cabeçalho de cada card, junto da modalidade, SRP e modo de disputa.
+Quando a situação é **Suspensa**, seu badge usa o mesmo destaque vermelho do SRP,
+tanto para dados salvos quanto após a atualização ao abrir o card.
+
+Ao abrir um card de oportunidade, a situação é consultada na API oficial do
+PNCP por meio do servidor e substitui a situação da última pesquisa.
+Não há polling nem atualização periódica da situação: a consulta ocorre
+na montagem do card ou quando sua identificação PNCP muda. Aplica-se também
+a cards abertos a partir de propostas salvas. O servidor atualiza a situação
+salva de agendadas/descartadas da mesma conta, preservando os demais dados.
+Enquanto consulta, o badge informa **Atualizando situação...**; em falhas ou
+identificação ausente, mantém a última situação e exibe **Situação não atualizada**
+com o detalhe no tooltip. Nunca presume uma situação nova sem resposta válida.
+
+### Cron de situação das propostas agendadas
+
+A API executa `0 * * * *` em `America/Sao_Paulo`: no início de cada hora,
+consulta o PNCP e atualiza `situacao` no JSON de **todas** as propostas
+agendadas (`registered_proposals`), em todas as contas, incluindo datas
+passadas. O cron não depende de navegador aberto. Propostas iguais em
+contas diferentes compartilham uma consulta; chamadas são sequenciais,
+com intervalo de 500 ms e timeout de 30 segundos.
+
+Falhas ou identificadores inválidos são registrados nos logs e preservam
+a última situação, sem impedir a atualização das demais propostas.
+Os logs também informam os totais atualizados e as falhas.
+O cron não altera datas, agendamentos, descartadas ou análises e não recria
+propostas removidas durante a consulta. Não permite execuções sobrepostas.
+No desligamento, interrompe as consultas antes de fechar o banco.
+
+O cron roda no processo da API; requer que o serviço permaneça ativo e
+uma única instância use esse volume SQLite. Após publicar a nova imagem,
+não é preciso configurar um cron externo no EasyPanel. A próxima execução
+ocorre na hora cheia, sem execução imediata na inicialização.
 
 Ao descartar uma proposta, todas as ações do card ficam desabilitadas, incluindo análise/cancelamento, resultado, calendário e links. Somente **Desfazer descartar** permanece disponível. Descartar não cancela automaticamente uma análise em andamento.
 
 Propostas agendadas exigem confirmação **Sim/Não** antes do descarte, avisando que o agendamento também será removido. **Não** ou Escape preservam ambos os registros; **Sim** descarta e remove o agendamento em uma única transação. Desfazer o descarte não restaura o agendamento.
+
+Propostas descartadas com data anterior a hoje são excluídas permanentemente
+do banco na inicialização da API e ao consultar/atualizar descartadas.
+A data considerada é o encerramento da proposta, com abertura e publicação
+como alternativas, no fuso `America/Sao_Paulo`. Datas sem fuso são interpretadas
+nesse horário. Propostas de hoje (mesmo com horário já passado), futuras e sem
+data válida são preservadas. O horário do descarte não interfere na limpeza.
+A tela sincroniza a lista a cada minuto, ao voltar para a janela, ao abrir/fechar
+descartadas e após descartar/restaurar, atualizando também os totais do painel.
+Essa limpeza não remove agendamentos nem análises.
 
 O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais e a lista seguem esse filtro. A data considerada continua sendo o encerramento da proposta, com abertura e publicação como alternativas. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário.
 

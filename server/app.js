@@ -217,6 +217,67 @@ function normalizeProposal(value) {
   return { key, serialized, value };
 }
 
+const proposalDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
+function proposalDay(date) {
+  const parts = proposalDayFormatter.formatToParts(date);
+  return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type).value).join('-');
+}
+
+function isExpiredProposal(proposal, today) {
+  const raw = proposal.dataEncerramentoProposta ?? proposal.dataAberturaProposta ?? proposal.dataPublicacao;
+  if (typeof raw !== 'string' || !raw.trim()) return false;
+  const value = raw.trim();
+  const local = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/.test(value);
+  const date = new Date(local ? `${value.length === 10 ? `${value}T00:00:00` : value}-03:00` : value);
+  if (Number.isNaN(date.getTime())) return false;
+  const day = proposalDay(date);
+  if (local && day !== value.slice(0, 10)) return false;
+  return day < today;
+}
+
+export function proposalIdentity(id, link) {
+  if (link) {
+    let url;
+    try {
+      url = new URL(link);
+    } catch {
+      throw Object.assign(new Error('Link PNCP inválido.'), { statusCode: 400 });
+    }
+    if (url.protocol !== 'https:' || !['pncp.gov.br', 'www.pncp.gov.br'].includes(url.hostname)
+      || url.port || url.username || url.password) {
+      throw Object.assign(new Error('Informe um link oficial do PNCP.'), { statusCode: 400 });
+    }
+    const match = url.pathname.match(/^\/app\/(?:editais|compras)\/(\d{14})\/(\d{4})\/([1-9]\d*)\/?$/);
+    if (match) return { cnpj: match[1], ano: match[2], sequencial: match[3] };
+    const control = url.pathname.match(/^\/app\/(?:editais|compras)\/(\d{14}-1-\d+\/\d{4})\/?$/);
+    if (control) id = control[1];
+  }
+  const match = typeof id === 'string' ? id.match(/^(\d{14})-1-(\d+)\/(\d{4})$/) : null;
+  if (!match || !Number.isSafeInteger(Number(match[2])) || Number(match[2]) < 1) {
+    throw Object.assign(new Error('Identificador PNCP indisponível ou inválido para atualizar a situação.'), { statusCode: 400 });
+  }
+  return { cnpj: match[1], ano: match[3], sequencial: String(Number(match[2])) };
+}
+
+export async function lookupProposalStatus(id, link, fetchImpl = fetch, signal) {
+  const { cnpj, ano, sequencial } = proposalIdentity(id, link);
+  const target = `https://pncp.gov.br/api/consulta/v1/orgaos/${cnpj}/compras/${ano}/${sequencial}`;
+  const upstream = await fetchImpl(target, {
+    headers: { Accept: 'application/json' }, redirect: 'error',
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
+  });
+  await requireUpstreamSuccess(upstream, 'PNCP');
+  const data = await upstream.json();
+  const situacao = data?.situacaoCompraNome ?? data?.situacaoCompraNomePncp;
+  if (typeof situacao !== 'string' || !situacao.trim()) {
+    throw new Error('PNCP retornou uma situação inválida ou não informada.');
+  }
+  return situacao.trim();
+}
+
 function serveStatic(request, response, pathname, staticDir) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     jsonResponse(response, 405, { error: 'Método não permitido.' }, { Allow: 'GET, HEAD' });
@@ -270,6 +331,7 @@ export function createApiServer({
   webhookUrl,
   analysisWebhookUrl,
   analysisWorkflowKey,
+  pncpFetch = fetch,
   upstreamTimeoutMs = 145000,
   analysisTimeoutMs = 30000,
   analysisStartTimeoutMs = 90000,
@@ -411,6 +473,16 @@ export function createApiServer({
   const deleteDiscarded = db.prepare(
     'DELETE FROM discarded_proposals WHERE owner = ? AND proposal_key = ?'
   );
+  const storedDiscarded = db.prepare('SELECT owner, proposal_key, value_json FROM discarded_proposals');
+  const pruneDiscarded = db.transaction(() => {
+    const today = proposalDay(new Date());
+    for (const row of storedDiscarded.all()) {
+      if (isExpiredProposal(JSON.parse(row.value_json), today)) {
+        deleteDiscarded.run(row.owner, row.proposal_key);
+      }
+    }
+  });
+  pruneDiscarded();
   const listRegistered = db.prepare(
     'SELECT value_json FROM registered_proposals WHERE owner = ? ORDER BY registered_at DESC, proposal_key'
   );
@@ -425,7 +497,11 @@ export function createApiServer({
     'DELETE FROM registered_proposals WHERE owner = ? AND proposal_key = ?'
   );
   const discardAndUnregister = db.transaction((owner, normalized) => {
-    saveDiscarded.run(owner, normalized.key, normalized.serialized, Date.now());
+    if (!isExpiredProposal(normalized.value, proposalDay(new Date()))) {
+      saveDiscarded.run(owner, normalized.key, normalized.serialized, Date.now());
+    } else {
+      deleteDiscarded.run(owner, normalized.key);
+    }
     deleteRegistered.run(owner, normalized.key);
   });
   const cookieOptions = `Path=/; HttpOnly; SameSite=Strict${secureCookies ? '; Secure' : ''}`;
@@ -719,6 +795,36 @@ export function createApiServer({
       }
     }
 
+    if (pathname === '/api/proposals/status' && request.method === 'GET') {
+      if (!session) {
+        jsonResponse(response, 401, { error: 'Sua sessão expirou. Entre novamente.' });
+        return;
+      }
+      try {
+        const id = url.searchParams.get('id');
+        const link = url.searchParams.get('link');
+        const status = await lookupProposalStatus(id, link, pncpFetch);
+        db.transaction(() => {
+          for (const table of ['discarded_proposals', 'registered_proposals']) {
+            const rows = db.prepare(`SELECT proposal_key, value_json FROM ${table} WHERE owner = ?`).all(session.username);
+            const update = db.prepare(`UPDATE ${table} SET value_json = ? WHERE owner = ? AND proposal_key = ?`);
+            for (const row of rows) {
+              const proposal = JSON.parse(row.value_json);
+              if ((id && proposal.idContratacaoPNCP === id) || (link && proposal.linkContratacao === link)) {
+                update.run(JSON.stringify({ ...proposal, situacao: status }), session.username, row.proposal_key);
+              }
+            }
+          }
+        })();
+        jsonResponse(response, 200, { situacao: status });
+      } catch (error) {
+        console.error('Falha ao atualizar situação da proposta:', error.message);
+        const failure = error.statusCode ? error : upstreamError('PNCP', error);
+        jsonResponse(response, failure.statusCode ?? 502, { error: failure.message });
+      }
+      return;
+    }
+
     if (pathname === '/api/discarded' || pathname.startsWith('/api/discarded/')) {
       if (!session) {
         jsonResponse(response, 401, { error: 'Sua sessão expirou. Entre novamente.' });
@@ -726,6 +832,7 @@ export function createApiServer({
       }
 
       if (request.method === 'GET' && pathname === '/api/discarded') {
+        pruneDiscarded();
         jsonResponse(response, 200, listDiscarded.all(session.username).map(row => JSON.parse(row.value_json)));
         return;
       }
@@ -741,6 +848,7 @@ export function createApiServer({
           jsonResponse(response, 400, { error: 'A proposta enviada não é válida.' });
           return;
         }
+        pruneDiscarded();
         discardAndUnregister(session.username, normalized);
         jsonResponse(response, 200, normalized.value);
         return;

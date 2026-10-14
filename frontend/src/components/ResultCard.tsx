@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { copyText } from '../copyText';
 import { formatDateTime, formatDuration } from '../format';
-import { getAnalysisParams, type AnalysisJob } from '../api';
+import { fetchProposalStatus, getAnalysisParams, getProposalKey, type AnalysisJob } from '../api';
 import { isTerminalAnalysis } from '../analysisStatus';
 import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
@@ -19,6 +19,7 @@ interface ResultCardProps {
   analysisCancelling?: boolean;
   analysisStarting?: boolean;
   analysisJob?: AnalysisJob;
+  onStatusUpdated?: (key: string, situacao: string) => void;
 }
 
 function isResumo(result: PregaoResultado): result is ResumoResultado {
@@ -37,10 +38,41 @@ export default function ResultCard({
   onCancelAnalysis,
   analysisCancelling = false,
   analysisStarting = false,
-  analysisJob
+  analysisJob,
+  onStatusUpdated
 }: ResultCardProps) {
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
   const [proposalLinkError, setProposalLinkError] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const proposalId = isResumo(result) ? null : result.idContratacaoPNCP;
+  const pncpLink = isResumo(result) ? null : result.linkContratacao;
+  const opportunity = !isResumo(result);
+  const proposalKey = isResumo(result) ? null : getProposalKey(result);
+  useEffect(() => {
+    setLiveStatus(null);
+    setStatusError(null);
+    if (!opportunity) return;
+    const controller = new AbortController();
+    setStatusLoading(true);
+    void fetchProposalStatus({ idContratacaoPNCP: proposalId, linkContratacao: pncpLink }, controller.signal)
+      .then(status => {
+        if (!controller.signal.aborted) {
+          setLiveStatus(status);
+          if (proposalKey) onStatusUpdated?.(proposalKey, status);
+        }
+      })
+      .catch(err => {
+        if (!controller.signal.aborted) {
+          setStatusError(err instanceof Error ? err.message : 'Não foi possível atualizar a situação.');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStatusLoading(false);
+      });
+    return () => controller.abort();
+  }, [proposalId, pncpLink, opportunity, proposalKey, onStatusUpdated]);
   const analysisFinished = Boolean(analysisJob && isTerminalAnalysis(analysisJob));
   const analysisRunning = analysisStarting || analysisCancelling || Boolean(analysisJob && !analysisFinished);
   useEffect(() => {
@@ -88,6 +120,8 @@ export default function ResultCard({
   const proposalLinkLabel = result.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
 
   const unidadeCompradora = result.unidadeCompradora;
+  const situacao = liveStatus ?? result.situacao;
+  const suspended = situacao?.trim().toLocaleLowerCase('pt-BR') === 'suspensa';
   const scorePercent = Number.isFinite(result.score)
     ? Math.min(100, Math.max(0, result.score))
     : 0;
@@ -119,9 +153,11 @@ export default function ResultCard({
             {result.modalidade ? <span className="badge">{result.modalidade}</span> : null}
             {result.registroPreco === true ? <span className="badge badge-srp">SRP</span> : null}
             {result.modoDisputa ? <span className="badge">{result.modoDisputa}</span> : null}
-            <span className="badge" aria-label={`Situação do edital: ${result.situacao ?? 'Não informada'}`}>
-              {result.situacao ?? '—'}
+            <span className={`badge${suspended ? ' badge-suspended' : ''}`} aria-busy={statusLoading} aria-label={`Situação do edital: ${situacao ?? 'Não informada'}`}>
+              {situacao ?? '—'}
             </span>
+            {statusLoading ? <span className="badge" role="status">Atualizando situação...</span> : null}
+            {statusError ? <span className="badge" role="status" title={statusError}>Situação não atualizada</span> : null}
           </div>
         </div>
         <div className="card-header-actions">

@@ -69,3 +69,17 @@ test('undoing discard restores buttons and report/purchase links', () => {
   assert.match(html, /href="https:\/\/pncp.gov.br\/test"/);
   assert.match(html, /Refazer análise/);
 });
+
+test('suspended status uses the red SRP styling without changing other statuses', () => {
+  for (const situacao of ['Suspensa', 'SUSPENSA', ' suspensa ']) {
+    const html = renderToStaticMarkup(createElement(ResultCard, {
+      result: { ...result, situacao, registroPreco: true }
+    }));
+    assert.match(html, /class="badge badge-suspended"[^>]*aria-label="Situação do edital:/);
+    assert.match(html, /class="badge badge-srp">SRP/);
+  }
+  for (const situacao of ['Divulgada', 'Encerrada', null]) {
+    const html = renderToStaticMarkup(createElement(ResultCard, { result: { ...result, situacao } }));
+    assert.doesNotMatch(html, /badge-suspended/);
+  }
+});

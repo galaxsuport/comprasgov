@@ -63,3 +63,28 @@ test('cancellation stays distinguishable from a timeout and analysis parameters 
     globalThis.fetch = original;
   }
 });
+
+test('status refresh forwards PNCP identifiers and abort signal and rejects invalid responses', async () => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  const proposal = { idContratacaoPNCP: '12345678000199-1-31/2026', linkContratacao: 'https://pncp.gov.br/app/editais/12345678000199/2026/31' };
+  try {
+    globalThis.fetch = async (url, init) => {
+      const target = new URL(url, 'http://localhost');
+      assert.equal(target.pathname, '/api/proposals/status');
+      assert.equal(target.searchParams.get('id'), proposal.idContratacaoPNCP);
+      assert.equal(target.searchParams.get('link'), proposal.linkContratacao);
+      assert.equal(init.signal, controller.signal);
+      return Response.json({ situacao: 'Suspensa' });
+    };
+    assert.equal(await api.fetchProposalStatus(proposal, controller.signal), 'Suspensa');
+    globalThis.fetch = async () => Response.json({ error: 'PNCP indisponível' }, { status: 502 });
+    await assert.rejects(api.fetchProposalStatus(proposal), /PNCP indisponível/);
+    for (const body of [{}, { situacao: null }, { situacao: ' ' }]) {
+      globalThis.fetch = async () => Response.json(body);
+      await assert.rejects(api.fetchProposalStatus(proposal), /Resposta inválida/);
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});

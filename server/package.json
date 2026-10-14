@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "node-cron": "^4.2.1"
   }
 }

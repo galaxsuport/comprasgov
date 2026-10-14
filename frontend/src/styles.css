@@ -99,6 +99,14 @@ body {
   cursor: pointer;
 }
 
+.logout-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
 .settings-toggle {
   display: inline-grid;
   flex: 0 0 auto;
@@ -786,7 +794,8 @@ body {
   letter-spacing: 0.02em;
 }
 
-.badge-srp {
+.badge-srp,
+.badge-suspended {
   background: rgba(180, 35, 24, 0.5);
   color: #fff;
 }

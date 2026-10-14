@@ -103,10 +103,27 @@ export function getProposalKey(result: OportunidadeResultado): string | null {
   return null;
 }
 
-export async function fetchDiscarded(): Promise<OportunidadeResultado[]> {
-  const response = await fetch('/api/discarded');
+export async function fetchDiscarded(signal?: AbortSignal): Promise<OportunidadeResultado[]> {
+  const response = await fetch('/api/discarded', { signal });
   if (!response.ok) throw new Error(await readApiError(response));
   return response.json() as Promise<OportunidadeResultado[]>;
+}
+
+export async function fetchProposalStatus(
+  proposal: Pick<OportunidadeResultado, 'idContratacaoPNCP' | 'linkContratacao'>,
+  signal?: AbortSignal
+): Promise<string> {
+  const params = new URLSearchParams();
+  if (proposal.idContratacaoPNCP) params.set('id', proposal.idContratacaoPNCP);
+  if (proposal.linkContratacao) params.set('link', proposal.linkContratacao);
+  const response = await fetch(`/api/proposals/status?${params}`, { signal });
+  if (!response.ok) throw new Error(await readApiError(response));
+  const data: unknown = await response.json();
+  if (!data || typeof data !== 'object' || !('situacao' in data)
+    || typeof data.situacao !== 'string' || !data.situacao.trim()) {
+    throw new Error('Resposta inválida ao atualizar a situação da proposta.');
+  }
+  return data.situacao;
 }
 
 export async function discardProposal(proposal: OportunidadeResultado): Promise<void> {

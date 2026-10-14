@@ -173,8 +173,10 @@ export default function CalendarPage({ proposals, onUnregister, onViewProposal, 
               : `${upcomingProposals.length} proposta${upcomingProposals.length === 1 ? '' : 's'} agendada${upcomingProposals.length === 1 ? '' : 's'} para hoje ou datas futuras.`}
           </p>
         </div>
-        <button type="button" className="logout-button" onClick={onBack}>
-          Voltar
+        <button type="button" className="logout-button logout-icon" onClick={onBack} aria-label="Voltar" title="Voltar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m12 19-7-7 7-7M5 12h14" />
+          </svg>
         </button>
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import {
   discardProposal,
   fetchDiscarded,
@@ -607,7 +607,11 @@ function SettingsPage({ branding, onBrandingChange, onBack }: {
         </div>
       )}
 
-      <button type="button" className="logout-button" onClick={onBack}>Voltar aos resultados</button>
+      <button type="button" className="logout-button logout-icon" onClick={onBack} aria-label="Voltar aos resultados" title="Voltar aos resultados">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m12 19-7-7 7-7M5 12h14" />
+        </svg>
+      </button>
     </section>
   );
 }
@@ -662,9 +666,13 @@ function Header({
         </svg>
       </button>
       {showLogout ? (
-        <button type="button" className="logout-button" onClick={onLogout}>
-        Sair
-      </button>
+        <button type="button" className="logout-button logout-icon" onClick={onLogout} aria-label="Sair" title="Sair">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="9" y1="12" x2="21" y2="12" />
+          </svg>
+        </button>
       ) : null}
       <p className="hero-copy">{branding.subtitle}</p>
     </header>
@@ -939,6 +947,10 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
+  const [proposalStatuses, setProposalStatuses] = useState<Map<string, string>>(() => new Map());
+  const handleStatusUpdated = useCallback((key: string, situacao: string) => {
+    setProposalStatuses(current => current.get(key) === situacao ? current : new Map(current).set(key, situacao));
+  }, []);
   const [discardConfirmation, setDiscardConfirmation] = useState<OportunidadeResultado | null>(null);
   const discardDialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -1173,9 +1185,33 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   discardedKeysRef.current = discardedKeys;
 
   useEffect(() => {
-    fetchDiscarded()
-      .then(setDiscarded)
-      .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
+    const controller = new AbortController();
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const proposals = await fetchDiscarded(controller.signal);
+        if (!controller.signal.aborted) setDiscarded(proposals);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.');
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 60000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [showDiscarded]);
+
+  useEffect(() => {
     fetchRegistered()
       .then(setRegistered)
       .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas agendadas.'));
@@ -1197,9 +1233,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
         await discardProposal(result);
         setRegistered(current => current.filter(item => getProposalKey(item) !== key));
       } else await restoreProposal(key);
-      setDiscarded(current => discarding
-        ? [result, ...current.filter(item => getProposalKey(item) !== key)]
-        : current.filter(item => getProposalKey(item) !== key));
+      setDiscarded(await fetchDiscarded());
     } catch (err) {
       setAppError(err instanceof Error ? err.message : 'Não foi possível atualizar a proposta.');
     } finally {
@@ -1402,8 +1436,10 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             {visibleResults.length > 0 ? (
               <section className="cards-shell" ref={proposalCardsRef}>
                 {selectedProposal && !showDiscarded ? (
-                  <button type="button" className="logout-button" onClick={() => setSelectedProposal(null)}>
-                    Voltar aos resultados da pesquisa
+                  <button type="button" className="logout-button logout-icon" onClick={() => setSelectedProposal(null)} aria-label="Voltar aos resultados da pesquisa" title="Voltar aos resultados da pesquisa">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m12 19-7-7 7-7M5 12h14" />
+                    </svg>
                   </button>
                 ) : null}
                 {visibleResults.map((item, index) => (
@@ -1411,7 +1447,10 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
                     key={item.tipoSaida === 'oportunidade'
                       ? getProposalKey(item) ?? `${item.local ?? 'unknown'}-${index}`
                       : `resumo-${index}`}
-                    result={item}
+                    result={item.tipoSaida === 'oportunidade'
+                      ? { ...item, situacao: proposalStatuses.get(getProposalKey(item) ?? '') ?? item.situacao }
+                      : item}
+                    onStatusUpdated={handleStatusUpdated}
                     isRegistered={item.tipoSaida === 'oportunidade'
                       && registeredKeys.has(getProposalKey(item) ?? '')}
                     isRegistering={item.tipoSaida === 'oportunidade'

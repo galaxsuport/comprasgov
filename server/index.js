@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApiServer } from './app.js';
+import { startProposalStatusCron } from './proposal-status-cron.js';
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(serverDir, '../frontend/.env') });
@@ -32,11 +33,17 @@ const server = createApiServer({
 });
 
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4174);
+let statusCron;
 server.listen(port, '0.0.0.0', () => {
+  statusCron = startProposalStatusCron({ db: database });
   console.log(`ComprasGov API listening on port ${port}`);
 });
 
-function shutdown() {
+let stopping = false;
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  await statusCron?.stop();
   server.close(() => {
     database.close();
     process.exit(0);
