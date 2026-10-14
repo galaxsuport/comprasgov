@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react';
-import { getAnalysisParams } from '../api';
 import { copyText } from '../copyText';
-import { formatDateTime } from '../format';
+import { formatDateTime, formatDuration } from '../format';
+import { getAnalysisParams, type AnalysisJob } from '../api';
+import { isTerminalAnalysis } from '../analysisStatus';
 import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
 
 interface ResultCardProps {
   result: PregaoResultado;
-  isFavorite?: boolean;
-  onToggleFavorite?: (result: OportunidadeResultado) => void;
   isRegistered?: boolean;
+  isRegistering?: boolean;
+  onToggleRegister?: (result: OportunidadeResultado) => void;
   onOpenCalendar?: () => void;
   isDiscarded?: boolean;
   onToggleDiscard?: (result: OportunidadeResultado) => void;
   onAnalyze?: (result: OportunidadeResultado) => void;
-  analysisState?: 'done' | 'pending';
-  analysisLocked?: boolean;
+  analysisStarting?: boolean;
+  analysisJob?: AnalysisJob;
 }
 
 function isOportunidade(result: PregaoResultado): result is OportunidadeResultado {
@@ -28,19 +29,27 @@ function isResumo(result: PregaoResultado): result is ResumoResultado {
 
 export default function ResultCard({
   result,
-  isFavorite = false,
-  onToggleFavorite,
   isRegistered = false,
+  isRegistering = false,
+  onToggleRegister,
   onOpenCalendar,
   isDiscarded = false,
   onToggleDiscard,
   onAnalyze,
-  analysisState,
-  analysisLocked = false
+  analysisStarting = false,
+  analysisJob
 }: ResultCardProps) {
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
   const [proposalLinkError, setProposalLinkError] = useState(false);
-
+  const [now, setNow] = useState(Date.now);
+  const analysisFinished = Boolean(analysisJob && isTerminalAnalysis(analysisJob));
+  const analysisRunning = analysisStarting || Boolean(analysisJob && !analysisFinished);
+  useEffect(() => {
+    if (!analysisRunning) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [analysisRunning, analysisJob?.jobId]);
   useEffect(() => {
     if (!proposalLinkCopied) return;
     const timeoutId = window.setTimeout(() => setProposalLinkCopied(false), 1800);
@@ -117,27 +126,19 @@ export default function ResultCard({
             {result.modalidade ? <span className="badge">{result.modalidade}</span> : null}
             {result.registroPreco === true ? <span className="badge badge-srp">SRP</span> : null}
             {result.modoDisputa ? <span className="badge">{result.modoDisputa}</span> : null}
+            <span className="badge" aria-label={`Situação do edital: ${result.situacao ?? 'Não informada'}`}>
+              {result.situacao ?? '—'}
+            </span>
           </div>
         </div>
         <div className="card-header-actions">
-          <button
-            type="button"
-            className="favorite-card-toggle"
-            onClick={() => onToggleFavorite?.(result)}
-            aria-label={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-            aria-pressed={isFavorite}
-            title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-            disabled={!result.idContratacaoPNCP && !result.linkContratacao}
-          >
-            <span aria-hidden="true">{isFavorite ? '★' : '☆'}</span>
-          </button>
           {isRegistered && onOpenCalendar ? (
             <button
               type="button"
               className="calendar-card-toggle"
               onClick={onOpenCalendar}
-              aria-label="Abrir agenda de propostas cadastradas"
-              title="Abrir agenda de propostas cadastradas"
+              aria-label="Abrir propostas agendadas"
+              title="Abrir propostas agendadas"
             >
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="3" y="5" width="18" height="16" rx="2" />
@@ -186,10 +187,6 @@ export default function ResultCard({
           <strong>{formatDateTime(result.dataEncerramentoProposta)}</strong>
         </div>
         <div>
-          <span>Situação</span>
-          <strong>{result.situacao ?? '—'}</strong>
-        </div>
-        <div>
           <span>Tempo restante</span>
           <strong><TimeRemaining deadline={result.dataEncerramentoProposta} /></strong>
         </div>
@@ -212,31 +209,56 @@ export default function ResultCard({
       </div>
       </div>
 
+      {analysisJob && !analysisStarting ? (
+        <section className="card-section" aria-label="Acompanhamento da análise">
+          <p className="section-label">Análise do edital</p>
+          <div className="card-grid card-analysis-progress">
+            <div><span>job_id</span><strong>{analysisJob.jobId}</strong></div>
+            <div><span>Tempo de análise</span><strong>{formatDuration((analysisJob.completedAt ?? now) - analysisJob.startedAt)}</strong></div>
+            <div aria-live="polite"><span>Status da análise</span><strong>{analysisJob.status}</strong></div>
+            <div aria-live="polite"><span>Mensagem de progresso</span><strong>{analysisJob.message ?? 'Sem mensagem de progresso'}</strong></div>
+          </div>
+        </section>
+      ) : null}
+
       <div className="card-discard-row">
-        <button
-          type="button"
-          className="discard-toggle analyze-link"
-          onClick={() => onAnalyze?.(result)}
-          disabled={isDiscarded || analysisLocked || analysisState === 'pending' || !getAnalysisParams(result)}
-          title={analysisLocked && !analysisState ? 'Aguarde o fim da análise em sequência' : analysisState === 'done' ? 'Excluir a análise anterior e iniciar novamente' : analysisState ? 'Análise em andamento' : getAnalysisParams(result) ? 'Analisar edital' : 'UASG ou número da compra indisponível'}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            {analysisState === 'done' ? (
-              <path d="M5 12.5l4.5 4.5L19 7.5" />
-            ) : analysisState === 'pending' ? (
-              <>
-                <path d="M6 3h12M6 21h12" />
-                <path d="M7 3v3a5 5 0 0 0 2 4l3 2-3 2a5 5 0 0 0-2 4v3M17 3v3a5 5 0 0 1-2 4l-3 2 3 2a5 5 0 0 1 2 4v3" />
-              </>
-            ) : (
-              <>
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 8v8M8 12h8" />
-              </>
-            )}
-          </svg>
-          <span>{analysisState === 'done' ? 'Refazer análise' : analysisState ? 'Analisando' : 'Analisar'}</span>
-        </button>
+        {onAnalyze ? (
+          <button
+            type="button"
+            className="discard-toggle"
+            onClick={() => onAnalyze(result)}
+            disabled={isDiscarded || analysisRunning || !getAnalysisParams(result)}
+            title={!getAnalysisParams(result) ? 'UASG ou número da compra indisponível'
+              : analysisRunning ? 'Análise em andamento' : analysisFinished ? 'Iniciar uma nova análise' : 'Analisar edital'}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+              <circle cx="10.8" cy="10.8" r="6.8" />
+              <path d="m16 16 5 5" />
+            </svg>
+            <span>{analysisRunning ? 'Analisando' : analysisFinished ? 'Refazer análise' : 'Analisar'}</span>
+          </button>
+        ) : null}
+        {analysisJob?.hasReport && !analysisStarting ? (
+          <a className="discard-toggle" href={`/api/analysis/${encodeURIComponent(analysisJob.jobId)}/report`} target="_blank" rel="noreferrer">
+            Resultado
+          </a>
+        ) : null}
+        {onToggleRegister ? (
+          <button
+            type="button"
+            className={`discard-toggle register-toggle-btn${isRegistered ? ' is-registered' : ''}`}
+            onClick={() => onToggleRegister(result)}
+            disabled={isDiscarded || isRegistering}
+            title={isRegistered ? 'Remover das propostas agendadas' : 'Adicionar às propostas agendadas'}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+              {isRegistered ? <path d="m9 16 2 2 4-4" /> : null}
+            </svg>
+            <span>{isRegistering ? 'Salvando...' : isRegistered ? 'Agendada' : 'Agendar proposta'}</span>
+          </button>
+        ) : null}
         {proposalLink ? (
           <a
             className="discard-toggle pncp-link"

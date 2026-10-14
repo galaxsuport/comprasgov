@@ -1,34 +1,25 @@
 import { useMemo } from 'react';
 import type { PregaoResultado, OportunidadeResultado, SummaryFilter } from '../types';
-import type { AnalysisJob } from '../api';
 import { formatBRL, formatCompactBRL } from '../format';
 
 interface DashboardProps {
   results: PregaoResultado[];
-  favorites: OportunidadeResultado[];
   registered: OportunidadeResultado[];
   discarded: OportunidadeResultado[];
-  analysisJobs: AnalysisJob[];
   activeFilter: SummaryFilter;
   onSelectFilter: (filter: SummaryFilter) => void;
-  onOpenFavorites: () => void;
   onOpenCalendar: () => void;
-  onOpenAnalysis: () => void;
   onOpenDiscarded: () => void;
   getProposalKey: (proposal: OportunidadeResultado) => string | null;
 }
 
 export function Dashboard({
   results,
-  favorites,
   registered,
   discarded,
-  analysisJobs,
   activeFilter,
   onSelectFilter,
-  onOpenFavorites,
   onOpenCalendar,
-  onOpenAnalysis,
   onOpenDiscarded,
   getProposalKey
 }: DashboardProps) {
@@ -179,11 +170,6 @@ export function Dashboard({
     }));
   }, [activeOpportunities]);
 
-  // Análises finalizadas
-  const analysisCompleted = useMemo(() => {
-    return analysisJobs.filter(job => /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status)).length;
-  }, [analysisJobs]);
-
   const hasResults = results.length > 0;
 
   return (
@@ -230,54 +216,19 @@ export function Dashboard({
           </div>
         </div>
 
-        {/* Propostas Cadastradas / Agenda */}
+        {/* Propostas agendadas */}
         <div
           className="dashboard-kpi-card kpi-clickable kpi-calendar"
           onClick={onOpenCalendar}
           role="button"
           tabIndex={0}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenCalendar(); } }}
-          title="Clique para abrir a Agenda de Propostas Cadastradas"
+          title="Clique para abrir as propostas agendadas"
         >
           <div className="kpi-icon-wrapper">📅</div>
           <div className="kpi-content">
-            <span className="kpi-label">Agenda Cadastrada</span>
+            <span className="kpi-label">Propostas agendadas</span>
             <div className="kpi-value">{registered.length}</div>
-          </div>
-        </div>
-
-        {/* Favoritos */}
-        <div
-          className="dashboard-kpi-card kpi-clickable kpi-favorites"
-          onClick={onOpenFavorites}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenFavorites(); } }}
-          title="Clique para ver os Favoritos salvos"
-        >
-          <div className="kpi-icon-wrapper">★</div>
-          <div className="kpi-content">
-            <span className="kpi-label">Favoritos Salvos</span>
-            <div className="kpi-value">{favorites.length}</div>
-          </div>
-        </div>
-
-        {/* Análises IA */}
-        <div
-          className="dashboard-kpi-card kpi-clickable kpi-analysis"
-          onClick={onOpenAnalysis}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenAnalysis(); } }}
-          title="Clique para ver as Análises de Editais"
-        >
-          <div className="kpi-icon-wrapper">🤖</div>
-          <div className="kpi-content">
-            <span className="kpi-label">Análises de Editais</span>
-            <div className="kpi-value">{analysisJobs.length}</div>
-            <span className="kpi-hint">
-              {analysisJobs.length > 0 ? `${analysisCompleted} concluídas` : 'Nenhuma análise'}
-            </span>
           </div>
         </div>
 

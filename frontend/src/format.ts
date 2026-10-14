@@ -1,3 +1,10 @@
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return [hours ? `${hours} h` : '', hours || minutes ? `${minutes} min` : '', `${total % 60} s`].filter(Boolean).join(' ');
+}
+
 export function formatDateTime(isoString: string | null): string {
   if (!isoString) return '—';
   const date = new Date(isoString);

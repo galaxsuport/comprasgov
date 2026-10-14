@@ -1,20 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import {
-  addFavorite,
   discardProposal,
   fetchDiscarded,
-  fetchFavorites,
   fetchRegistered,
   registerProposal,
   restoreProposal,
   unregisterProposal,
-  beginAnalysis,
-  enqueueAnalysis,
-  removeAnalysis,
-  refreshAnalysis,
   fetchAnalyses,
-  fetchResultados,
+  startAnalysis,
+  refreshAnalysis,
   getAnalysisParams,
+  type AnalysisJob,
+  fetchResultados,
   fetchText,
   fetchDeadline,
   saveText,
@@ -24,37 +21,14 @@ import {
   type TermKind,
   changePassword,
   logout,
-  removeFavorite,
+  getProposalKey,
   WebhookPopupError
 } from './api';
-import type { AnalysisJob } from './api';
 import type { OportunidadeResultado, PregaoResultado, SummaryFilter } from './types';
 import ResultCard from './components/ResultCard';
-import AnalysisPage from './components/AnalysisPage';
 import CalendarPage from './components/CalendarPage';
+import { isTerminalAnalysis } from './analysisStatus';
 import { Dashboard as DashboardView } from './components/Dashboard';
-
-const LEGACY_FAVORITES_STORAGE_KEY = 'comprasgov:favorites';
-
-function getFavoriteKey(result: OportunidadeResultado): string | null {
-  if (result.idContratacaoPNCP) return `id:${result.idContratacaoPNCP}`;
-  if (result.linkContratacao) return `link:${result.linkContratacao}`;
-  return null;
-}
-
-function readLegacyFavorites(): OportunidadeResultado[] {
-  const saved = localStorage.getItem(LEGACY_FAVORITES_STORAGE_KEY);
-  if (!saved) return [];
-
-  const parsed: unknown = JSON.parse(saved);
-  if (!Array.isArray(parsed)) {
-    throw new Error('Os favoritos locais antigos estão em um formato inválido.');
-  }
-
-  return parsed.filter((item): item is OportunidadeResultado =>
-    item?.tipoSaida === 'oportunidade' && Boolean(item.idContratacaoPNCP || item.linkContratacao)
-  );
-}
 
 interface FetchFilters {
   ufs?: string;
@@ -545,8 +519,7 @@ function BrandingSettings({ value, onChange }: { value: Branding; onChange: (bra
   );
 }
 
-function SettingsPage({ favoritesCount, branding, onBrandingChange, onBack }: {
-  favoritesCount: number;
+function SettingsPage({ branding, onBrandingChange, onBack }: {
   branding: Branding;
   onBrandingChange: (branding: Branding) => void;
   onBack: () => void;
@@ -594,11 +567,6 @@ function SettingsPage({ favoritesCount, branding, onBrandingChange, onBack }: {
 
       {tab === 'account' ? (
         <div role="tabpanel" id="settings-panel-account" aria-labelledby="settings-tab-account" className="settings-panel">
-          <div className="settings-section">
-            <h3>Conta</h3>
-            <p className="filter-hint">Seus favoritos ({favoritesCount}) ficam salvos no servidor e acompanham a sua conta em qualquer dispositivo.</p>
-          </div>
-
           <div className="settings-section settings-section-wide">
             <h3>Identificação</h3>
             <BrandingSettings value={branding} onChange={onBrandingChange} />
@@ -727,20 +695,18 @@ function matchesSummaryFilter(result: PregaoResultado, filter: SummaryFilter): b
 
 function Summary({
   results,
-  favoritesView,
   discardedView,
   activeFilter,
   onSelectFilter
 }: {
   results: PregaoResultado[];
-  favoritesView: boolean;
   discardedView: boolean;
   activeFilter: SummaryFilter;
   onSelectFilter: (filter: SummaryFilter) => void;
 }) {
   const count = (filter: SummaryFilter) => results.filter(result => matchesSummaryFilter(result, filter)).length;
   const othersSum = count('dispensas') + count('pregao') + count('sigiloso') + count('srp');
-  const total = othersSum === 0 && !favoritesView && !discardedView ? 0 : results.length;
+  const total = othersSum === 0 && !discardedView ? 0 : results.length;
 
   return (
     <section className="summary-bar">
@@ -786,15 +752,13 @@ function Summary({
         aria-pressed={activeFilter === null}
         onClick={() => onSelectFilter(null)}
       >
-        <p className="summary-label">{discardedView ? 'Descartadas' : favoritesView ? 'Favoritos salvos' : 'Total'}</p>
+        <p className="summary-label">{discardedView ? 'Descartadas' : 'Total'}</p>
         <p className="summary-value">{total}</p>
       </button>
       <p className="summary-note">
         {discardedView
           ? 'Propostas descartadas salvas na sua conta.'
-          : favoritesView
-            ? 'Oportunidades armazenadas neste navegador.'
-            : 'Os dados são consumidos diretamente do PNCP.'}
+          : 'Os dados são consumidos diretamente do PNCP.'}
       </p>
     </section>
   );
@@ -971,41 +935,74 @@ function CountdownSpinner() {
 
 function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: () => void }) {
   const [resultados, setResultados] = useState<PregaoResultado[]>([]);
-  const [favorites, setFavorites] = useState<OportunidadeResultado[]>([]);
-  const [favoritesLoading, setFavoritesLoading] = useState(true);
-  const [favoriteError, setFavoriteError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
   const [showCalendar, setShowCalendar] = useState(false);
-  const [favoriteOperations, setFavoriteOperations] = useState<Set<string>>(() => new Set());
-  const [showFavorites, setShowFavorites] = useState(false);
+  const [proposalOperations, setProposalOperations] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
-  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
   const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
-  const analysisCount = analysisJobs.length;
-  const analysisDoneCount = analysisJobs.filter(job => /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status)).length;
-  const [batchRunning, setBatchRunning] = useState(false);
-  const [batchError, setBatchError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-  const analysisStates = useMemo(() => {
-    const states = new Map<string, 'done' | 'pending'>();
-    for (const job of analysisJobs) {
-      if (/erro|falha|fail|cancel/i.test(job.status)) continue;
-      const key = getFavoriteKey(job.proposal);
-      if (key) states.set(key, /conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status) ? 'done' : 'pending');
-    }
-    return states;
-  }, [analysisJobs]);
+  const analysisStartingRef = useRef(new Set<string>());
 
   useEffect(() => {
-    fetchAnalyses().then(setAnalysisJobs).catch(() => undefined);
+    const controller = new AbortController();
+    void fetchAnalyses(controller.signal).then(jobs => setAnalysisJobs(current => [
+      ...current, ...jobs.filter(job => !current.some(item => item.proposalKey === job.proposalKey))
+    ])).catch(err => {
+      if (!controller.signal.aborted) setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as análises.');
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const running = analysisJobs.filter(job => !isTerminalAnalysis(job));
+    if (running.length === 0) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      const updates = await Promise.all(running.map(async job => {
+        try {
+          return await refreshAnalysis(job.jobId, controller.signal);
+        } catch (err) {
+          if (!controller.signal.aborted) setAppError(err instanceof Error ? err.message : 'Não foi possível acompanhar a análise.');
+          return job;
+        }
+      }));
+      if (!controller.signal.aborted) {
+        setAnalysisJobs(current => current.map(job => updates.find(update => update.jobId === job.jobId) ?? job));
+      }
+    }, 2000);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [analysisJobs]);
+
+  const analyzeProposal = async (proposal: OportunidadeResultado) => {
+    const key = getProposalKey(proposal);
+    const params = getAnalysisParams(proposal);
+    if (!key || !params) {
+      setAppError('UASG ou número da compra indisponível para análise.');
+      return;
+    }
+    if (analysisStartingRef.current.has(key)) return;
+    analysisStartingRef.current.add(key);
+    setAnalysisStartingKeys(current => new Set(current).add(key));
+    setAppError(null);
+    try {
+      const job = await startAnalysis({ ...proposal, ...params });
+      setAnalysisJobs(current => [job, ...current.filter(item => item.proposalKey !== key)]);
+    } catch (err) {
+      setAppError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+    } finally {
+      analysisStartingRef.current.delete(key);
+      setAnalysisStartingKeys(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+  useEffect(() => {
+    localStorage.removeItem('comprasgov:favorites');
   }, []);
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
 
@@ -1020,48 +1017,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [error, setError] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<{ title: string; message: string; sample: string | null } | null>(null);
   const [filters, setFilters] = useState<FetchFilters | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadFavorites() {
-      try {
-        const savedFavorites = await fetchFavorites();
-        if (cancelled) return;
-        setFavorites(savedFavorites);
-
-        const legacyFavorites = readLegacyFavorites();
-        const knownKeys = new Set(savedFavorites.map(getFavoriteKey));
-        const migrated: OportunidadeResultado[] = [];
-        for (const favorite of legacyFavorites) {
-          const key = getFavoriteKey(favorite);
-          if (!key || knownKeys.has(key)) continue;
-          migrated.push(await addFavorite(favorite));
-          knownKeys.add(key);
-        }
-
-        if (cancelled) return;
-        if (migrated.length > 0) {
-          setFavorites(current => [...migrated, ...current]);
-        }
-        if (legacyFavorites.length > 0) {
-          localStorage.removeItem(LEGACY_FAVORITES_STORAGE_KEY);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setFavoriteError(err instanceof Error ? err.message : 'Não foi possível carregar os favoritos.');
-        }
-      } finally {
-        if (!cancelled) setFavoritesLoading(false);
-      }
-    }
-
-    loadFavorites();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!filters?.ufs && !filters?.uasg) return;
@@ -1129,8 +1084,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const handleFilterChange = (newFilters: FetchFilters) => {
     setSummaryFilter(null);
     setSettingsOpen(false);
-    setAnalysisOpen(false);
-    setShowFavorites(false);
     setShowDiscarded(false);
     setFilters(newFilters);
     window.scrollTo({ top: 0 });
@@ -1148,7 +1101,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const discardedKeysRef = useRef<Set<string>>(new Set());
   const orderedResults = useMemo(() => {
     const isDiscarded = (item: PregaoResultado) =>
-      item.tipoSaida === 'oportunidade' && discardedKeysRef.current.has(getFavoriteKey(item) ?? '');
+      item.tipoSaida === 'oportunidade' && discardedKeysRef.current.has(getProposalKey(item) ?? '');
     const isSrp = (item: PregaoResultado) =>
       item.tipoSaida === 'oportunidade' && item.registroPreco === true;
 
@@ -1164,178 +1117,36 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     return [...notDiscardedNonSrp, ...notDiscardedSrp, ...discardedNonSrp, ...discardedSrp];
   }, [resultados]);
 
-  const discardedKeys = new Set(discarded.map(getFavoriteKey).filter((key): key is string => key !== null));
+  const discardedKeys = new Set(discarded.map(getProposalKey).filter((key): key is string => key !== null));
 
   discardedKeysRef.current = discardedKeys;
 
   useEffect(() => {
     fetchDiscarded()
       .then(setDiscarded)
-      .catch(err => setFavoriteError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
+      .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
     fetchRegistered()
       .then(setRegistered)
       .catch(() => undefined);
   }, []);
 
-  // Processa só os pendentes do momento do clique; inclusões posteriores ficam de fora.
-  const runAllAnalyses = async () => {
-    if (batchRunning) return;
-    const queue = analysisJobs.filter(job => job.status === 'pendente').map(job => job.jobId);
-    if (queue.length === 0) return;
-
-    const isDone = (job: AnalysisJob) => /erro|falha|fail|cancel|conclu|finaliz|pronto|sucesso|complet|done/i.test(job.status);
-    const replace = (oldId: string, job: AnalysisJob) =>
-      setAnalysisJobs(current => current.map(item => (item.jobId === oldId ? job : item)));
-    const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
-
-    let failedStarts = 0;
-    setBatchRunning(true);
-    setBatchError(null);
-    try {
-      for (const id of queue) {
-        if (!mountedRef.current) return;
-        let current: AnalysisJob;
-        try {
-          current = await beginAnalysis(id);
-        } catch (err) {
-          failedStarts += 1;
-          setBatchError(`${failedStarts} análise(s) não puderam ser iniciadas e foram puladas. Último erro: ${err instanceof Error ? err.message : 'falha ao iniciar.'}`);
-          continue;
-        }
-        replace(id, current);
-
-        let failures = 0;
-        while (mountedRef.current && !isDone(current) && failures < 3) {
-          await wait(5000);
-          try {
-            const updated = await refreshAnalysis(current.jobId);
-            failures = 0;
-            replace(current.jobId, updated);
-            current = updated;
-          } catch {
-            failures += 1;
-          }
-        }
-      }
-    } finally {
-      if (mountedRef.current) setBatchRunning(false);
-    }
-  };
-
-  const trackAnalysis = async (initialJob: AnalysisJob) => {
-    let current = initialJob;
-    const isFinished = (status: string) =>
-      /erro|falha|fail|cancel|conclu|finaliz|pronto|sucesso|complet|done/i.test(status);
-
-    while (mountedRef.current && !isFinished(current.status)) {
-      await new Promise(resolve => window.setTimeout(resolve, 2000));
-      try {
-        current = await refreshAnalysis(current.jobId);
-        if (mountedRef.current) {
-          setAnalysisJobs(jobs => jobs.map(job => job.jobId === current.jobId ? current : job));
-        }
-      } catch (err) {
-        if (mountedRef.current) {
-          setFavoriteError(err instanceof Error ? err.message : 'Não foi possível acompanhar a análise.');
-          setAnalysisJobs(jobs => jobs.map(job => job.jobId === current.jobId
-            ? { ...job, status: 'erro' }
-            : job
-          ));
-        }
-        return;
-      }
-    }
-  };
-
-  const analyzeProposal = async (result: OportunidadeResultado) => {
-    setFavoriteError(null);
-    const key = getFavoriteKey(result);
-    if (!key) {
-      setFavoriteError('Não foi possível identificar a proposta para análise.');
-      return;
-    }
-
-    setAnalysisStartingKeys(current => new Set(current).add(key));
-    try {
-      const params = getAnalysisParams(result);
-      if (!params) throw new Error('UASG ou número da compra indisponível para esta proposta.');
-
-      const previousJob = analysisJobs.find(item => getFavoriteKey(item.proposal) === key);
-      if (previousJob) {
-        await removeAnalysis(previousJob.jobId);
-        setAnalysisJobs(current => current.filter(item => item.jobId !== previousJob.jobId));
-      }
-
-      const queuedJob = await enqueueAnalysis({ ...result, ...params });
-      const job = await beginAnalysis(queuedJob.jobId);
-      setAnalysisJobId(job.jobId);
-      setAnalysisJobs(current => [
-        job,
-        ...current.filter(item => item.jobId !== job.jobId && getFavoriteKey(item.proposal) !== key)
-      ]);
-      void trackAnalysis(job);
-
-      if (key && !favorites.some(item => getFavoriteKey(item) === key)) {
-        try {
-          const saved = await addFavorite(result);
-          setFavorites(current => [saved, ...current.filter(item => getFavoriteKey(item) !== key)]);
-        } catch {
-          setFavoriteError('A análise foi incluída, mas não foi possível salvar o favorito.');
-        }
-      }
-    } catch (err) {
-      setFavoriteError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
-    } finally {
-      setAnalysisStartingKeys(current => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
-    }
-  };
-
   const toggleDiscard = async (result: OportunidadeResultado) => {
-    const key = getFavoriteKey(result);
-    if (!key || favoriteOperations.has(key)) return;
+    const key = getProposalKey(result);
+    if (!key || proposalOperations.has(key)) return;
 
     const discarding = !discardedKeys.has(key);
-    setFavoriteOperations(current => new Set(current).add(key));
-    setFavoriteError(null);
+    setProposalOperations(current => new Set(current).add(key));
+    setAppError(null);
     try {
       if (discarding) await discardProposal(result);
       else await restoreProposal(key);
       setDiscarded(current => discarding
-        ? [result, ...current.filter(item => getFavoriteKey(item) !== key)]
-        : current.filter(item => getFavoriteKey(item) !== key));
+        ? [result, ...current.filter(item => getProposalKey(item) !== key)]
+        : current.filter(item => getProposalKey(item) !== key));
     } catch (err) {
-      setFavoriteError(err instanceof Error ? err.message : 'Não foi possível atualizar a proposta.');
+      setAppError(err instanceof Error ? err.message : 'Não foi possível atualizar a proposta.');
     } finally {
-      setFavoriteOperations(current => {
-        const updated = new Set(current);
-        updated.delete(key);
-        return updated;
-      });
-    }
-  };
-
-  const toggleFavorite = async (result: OportunidadeResultado) => {
-    const key = getFavoriteKey(result);
-    if (!key || favoriteOperations.has(key)) return;
-
-    setFavoriteOperations(current => new Set(current).add(key));
-    setFavoriteError(null);
-    try {
-      if (favorites.some(item => getFavoriteKey(item) === key)) {
-        await removeFavorite(key);
-        setFavorites(current => current.filter(item => getFavoriteKey(item) !== key));
-      } else {
-        const saved = await addFavorite(result);
-        setFavorites(current => [saved, ...current.filter(item => getFavoriteKey(item) !== key)]);
-      }
-    } catch (err) {
-      setFavoriteError(err instanceof Error ? err.message : 'Não foi possível atualizar os favoritos.');
-    } finally {
-      setFavoriteOperations(current => {
+      setProposalOperations(current => {
         const updated = new Set(current);
         updated.delete(key);
         return updated;
@@ -1348,39 +1159,51 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
       await logout();
       onLogout();
     } catch (err) {
-      setFavoriteError(err instanceof Error ? err.message : 'Não foi possível encerrar a sessão.');
+      setAppError(err instanceof Error ? err.message : 'Não foi possível encerrar a sessão.');
     }
   };
 
   const registeredKeys = useMemo(() => {
-    return new Set(registered.map(getFavoriteKey).filter((k): k is string => k !== null));
+    return new Set(registered.map(getProposalKey).filter((k): k is string => k !== null));
   }, [registered]);
 
   const toggleRegisterProposal = async (proposal: OportunidadeResultado) => {
-    const key = getFavoriteKey(proposal);
+    const key = getProposalKey(proposal);
     if (!key) throw new Error('Não foi possível identificar a proposta para cadastro.');
+    if (proposalOperations.has(key)) return;
+
+    setProposalOperations(current => new Set(current).add(key));
     const isReg = registeredKeys.has(key);
-    if (isReg) {
-      await unregisterProposal(key);
-      setRegistered(current => current.filter(item => getFavoriteKey(item) !== key));
-    } else {
-      await registerProposal(proposal);
-      setRegistered(current => [proposal, ...current.filter(item => getFavoriteKey(item) !== key)]);
+    try {
+      if (isReg) {
+        await unregisterProposal(key);
+        setRegistered(current => current.filter(item => getProposalKey(item) !== key));
+      } else {
+        await registerProposal(proposal);
+        setRegistered(current => [proposal, ...current.filter(item => getProposalKey(item) !== key)]);
+      }
+    } finally {
+      setProposalOperations(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
-  const favoritesByDeadline = [...favorites].sort((a, b) => {
-    const timeA = a.dataEncerramentoProposta ? Date.parse(a.dataEncerramentoProposta) : NaN;
-    const timeB = b.dataEncerramentoProposta ? Date.parse(b.dataEncerramentoProposta) : NaN;
-    if (Number.isNaN(timeA) && Number.isNaN(timeB)) return 0;
-    if (Number.isNaN(timeA)) return 1;
-    if (Number.isNaN(timeB)) return -1;
-    return timeA - timeB;
-  });
-  const baseResults = showDiscarded ? discarded : showFavorites ? favoritesByDeadline : orderedResults;
+  const handleToggleRegisterProposal = async (proposal: OportunidadeResultado) => {
+    setAppError(null);
+    try {
+      await toggleRegisterProposal(proposal);
+    } catch (err) {
+      setAppError(err instanceof Error ? err.message : 'Não foi possível atualizar as propostas agendadas.');
+    }
+  };
+
+  const baseResults = showDiscarded ? discarded : orderedResults;
   const summaryResults = showDiscarded
     ? baseResults
-    : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getFavoriteKey(item) ?? ''));
+    : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getProposalKey(item) ?? ''));
   const visibleResults = baseResults.filter(result => matchesSummaryFilter(result, summaryFilter));
 
   return (
@@ -1399,19 +1222,16 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
       <main className="page-shell">
         <Header
           branding={branding}
-          isHome={!showFavorites && !showCalendar && !showDiscarded && !analysisOpen && !settingsOpen}
+          isHome={!showCalendar && !showDiscarded && !settingsOpen}
           onGoHome={() => {
-            setShowFavorites(false);
             setShowCalendar(false);
             setShowDiscarded(false);
-            setAnalysisOpen(false);
             setSettingsOpen(false);
             setSummaryFilter(null);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           settingsOpen={settingsOpen}
           onToggleSettings={() => {
-            setAnalysisOpen(false);
             setShowCalendar(false);
             setSettingsOpen(current => !current);
           }}
@@ -1425,20 +1245,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             onUnregister={toggleRegisterProposal}
             onBack={() => setShowCalendar(false)}
           />
-        ) : analysisOpen && !settingsOpen ? (
-          <AnalysisPage
-            focusJobId={analysisJobId}
-            batchRunning={batchRunning}
-            batchError={batchError}
-            registeredKeys={registeredKeys}
-            onRunAll={() => void runAllAnalyses()}
-            onJobsChange={setAnalysisJobs}
-            onRegisterProposal={(job) => toggleRegisterProposal(job.proposal)}
-            onBack={() => setAnalysisOpen(false)}
-          />
         ) : settingsOpen ? (
           <SettingsPage
-            favoritesCount={favorites.length}
             branding={branding}
             onBrandingChange={setBranding}
             onBack={() => setSettingsOpen(false)}
@@ -1446,12 +1254,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
         ) : (
         <>
 
-        {favoriteError ? (
-          <div className="status-card status-error" role="alert">{favoriteError}</div>
-        ) : null}
-
-        {favoritesLoading ? (
-          <div className="status-card">Carregando favoritos...</div>
+        {appError ? (
+          <div className="status-card status-error" role="alert">{appError}</div>
         ) : null}
 
         {loading ? (
@@ -1469,53 +1273,32 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           </div>
         ) : null}
 
-        {!showFavorites && !showDiscarded ? (
+        {!showDiscarded ? (
           <DashboardView
             results={resultados}
-            favorites={favorites}
             registered={registered}
             discarded={discarded}
-            analysisJobs={analysisJobs}
             activeFilter={summaryFilter}
             onSelectFilter={handleSummaryFilterChange}
-            onOpenFavorites={() => {
-              setAnalysisOpen(false);
-              setSettingsOpen(false);
-              setShowCalendar(false);
-              setShowDiscarded(false);
-              setShowFavorites(true);
-            }}
             onOpenCalendar={() => {
-              setAnalysisOpen(false);
               setSettingsOpen(false);
-              setShowFavorites(false);
               setShowDiscarded(false);
               setShowCalendar(true);
             }}
-            onOpenAnalysis={() => {
-              setSettingsOpen(false);
-              setShowFavorites(false);
-              setShowCalendar(false);
-              setShowDiscarded(false);
-              setAnalysisOpen(true);
-            }}
             onOpenDiscarded={() => {
-              setAnalysisOpen(false);
               setSettingsOpen(false);
-              setShowFavorites(false);
               setShowCalendar(false);
               setShowDiscarded(true);
             }}
-            getProposalKey={getFavoriteKey}
+            getProposalKey={getProposalKey}
           />
         ) : null}
 
         {baseResults.length > 0 ? (
           <>
-            {showFavorites || showDiscarded ? (
+            {showDiscarded ? (
               <Summary
                 results={summaryResults}
-                favoritesView={showFavorites}
                 discardedView={showDiscarded}
                 activeFilter={summaryFilter}
                 onSelectFilter={handleSummaryFilterChange}
@@ -1526,30 +1309,26 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
                 {visibleResults.map((item, index) => (
                   <ResultCard
                     key={item.tipoSaida === 'oportunidade'
-                      ? getFavoriteKey(item) ?? `${item.local ?? 'unknown'}-${index}`
+                      ? getProposalKey(item) ?? `${item.local ?? 'unknown'}-${index}`
                       : `resumo-${index}`}
                     result={item}
-                    isFavorite={item.tipoSaida === 'oportunidade'
-                      && favorites.some(favorite => getFavoriteKey(favorite) === getFavoriteKey(item))}
-                    onToggleFavorite={toggleFavorite}
                     isRegistered={item.tipoSaida === 'oportunidade'
-                      && registeredKeys.has(getFavoriteKey(item) ?? '')}
+                      && registeredKeys.has(getProposalKey(item) ?? '')}
+                    isRegistering={item.tipoSaida === 'oportunidade'
+                      && proposalOperations.has(getProposalKey(item) ?? '')}
+                    onToggleRegister={item.tipoSaida === 'oportunidade' ? handleToggleRegisterProposal : undefined}
                     onOpenCalendar={() => {
-                      setAnalysisOpen(false);
                       setSettingsOpen(false);
-                      setShowFavorites(false);
                       setShowDiscarded(false);
                       setShowCalendar(true);
                     }}
                     isDiscarded={item.tipoSaida === 'oportunidade'
-                      && discardedKeys.has(getFavoriteKey(item) ?? '')}
+                      && discardedKeys.has(getProposalKey(item) ?? '')}
                     onToggleDiscard={toggleDiscard}
                     onAnalyze={analyzeProposal}
-                    analysisLocked={batchRunning}
-                    analysisState={item.tipoSaida === 'oportunidade'
-                      ? analysisStartingKeys.has(getFavoriteKey(item) ?? '')
-                        ? 'pending'
-                        : analysisStates.get(getFavoriteKey(item) ?? '')
+                    analysisStarting={item.tipoSaida === 'oportunidade' && analysisStartingKeys.has(getProposalKey(item) ?? '')}
+                    analysisJob={item.tipoSaida === 'oportunidade'
+                      ? analysisJobs.find(job => job.proposalKey === getProposalKey(item))
                       : undefined}
                   />
                 ))}
@@ -1560,7 +1339,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           </>
         ) : !loading && !error ? (
           <div className="status-card">
-            {showDiscarded ? 'Nenhuma proposta descartada.' : showFavorites ? 'Nenhum favorito salvo.' : 'Nenhum resultado carregado ainda. Selecione os filtros na barra lateral e clique em Pesquisar.'}
+            {showDiscarded ? 'Nenhuma proposta descartada.' : 'Nenhum resultado carregado ainda. Selecione os filtros na barra lateral e clique em Pesquisar.'}
           </div>
         ) : null}
         </>

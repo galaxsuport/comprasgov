@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { copyText } from '../copyText';
 import { formatDateTime } from '../format';
 import type { OportunidadeResultado } from '../types';
-import { getFavoriteKey } from '../api';
+import { getProposalKey } from '../api';
 
 interface CalendarPageProps {
   proposals: OportunidadeResultado[];
@@ -71,7 +71,7 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
 
   const copyProposalLink = async (p: OportunidadeResultado) => {
     if (!p.cadastroProposta) return;
-    const key = getFavoriteKey(p) ?? p.numeroCompra ?? '';
+    const key = getProposalKey(p) ?? p.numeroCompra ?? '';
     try {
       await copyText(p.cadastroProposta);
       setCopiedKey(key);
@@ -162,11 +162,11 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
     <section className="settings-page calendar-page">
       <div className="calendar-header-row">
         <div>
-          <h2>Agenda de Propostas Cadastradas</h2>
+          <h2>Propostas agendadas</h2>
           <p className="filter-hint">
             {proposals.length === 0
-              ? 'Nenhuma proposta cadastrada ainda. Use o botão "Proposta cadastrada" nas análises para adicionar.'
-              : `${proposals.length} proposta${proposals.length === 1 ? '' : 's'} cadastrada${proposals.length === 1 ? '' : 's'} na agenda.`}
+              ? 'Nenhuma proposta agendada ainda. Use o botão "Agendar proposta" nos resultados da pesquisa para adicionar.'
+              : `${proposals.length} proposta${proposals.length === 1 ? '' : 's'} agendada${proposals.length === 1 ? '' : 's'}.`}
           </p>
         </div>
         <button type="button" className="logout-button" onClick={onBack}>
@@ -218,10 +218,10 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                 }}
                 title={
                   day.isToday
-                    ? `Hoje (${day.hasProposals ? `${day.count} proposta${day.count === 1 ? '' : 's'} cadastrada${day.count === 1 ? '' : 's'}` : 'sem propostas cadastradas'})`
+                    ? `Hoje (${day.hasProposals ? `${day.count} proposta${day.count === 1 ? '' : 's'} agendada${day.count === 1 ? '' : 's'}` : 'sem propostas agendadas'})`
                     : day.hasProposals
-                    ? `${day.count} proposta${day.count === 1 ? '' : 's'} cadastrada${day.count === 1 ? '' : 's'}`
-                    : 'Sem propostas cadastradas'
+                    ? `${day.count} proposta${day.count === 1 ? '' : 's'} agendada${day.count === 1 ? '' : 's'}`
+                    : 'Sem propostas agendadas'
                 }
               >
                 <div className="day-cell-top">
@@ -246,23 +246,23 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
             {selectedProposals.map(p => {
               const link = p.linkContratacao ?? p.linkSistemaOrigem;
               return (
-                <article key={getFavoriteKey(p) ?? p.numeroCompra ?? Math.random()} className="analysis-card">
+                <article key={getProposalKey(p) ?? p.numeroCompra ?? Math.random()} className="calendar-proposal-card">
                   <header>
-                    <span className="analysis-status analysis-done">Cadastrada</span>
+                    <span className="calendar-proposal-status">Agendada</span>
                     <strong>{p.unidadeCompradora ?? p.orgao ?? 'Proposta'}</strong>
                     <span>{p.numeroCompra}</span>
                   </header>
                   <dl>
                     <dt>resumo do objeto</dt>
-                    <dd className="analysis-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
+                    <dd className="calendar-proposal-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
                     <dt>valor do edital</dt>
-                    <dd className="analysis-value">{p.valor ?? '—'}</dd>
+                    <dd className="calendar-proposal-value">{p.valor ?? '—'}</dd>
                     <dt>abertura da sessão</dt>
                     <dd>{formatDateTime(p.dataEncerramentoProposta)}</dd>
                     <dt>local</dt>
                     <dd>{p.local ?? '—'}</dd>
                   </dl>
-                  <div className="card-discard-row analysis-actions">
+                  <div className="card-discard-row">
                     {link ? (
                       <a
                         className="discard-toggle pncp-link"
@@ -284,17 +284,17 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                         type="button"
                         className="discard-toggle action-link"
                         onClick={() => void copyProposalLink(p)}
-                        aria-label={copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                        title={copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
+                        aria-label={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
+                        title={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
                       >
-                        {copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
+                        {copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
                       </button>
                     ) : null}
                     <button
                       type="button"
                       className="discard-toggle"
                       onClick={() => onUnregister(p)}
-                      title="Remover da lista de cadastradas"
+                      title="Remover das propostas agendadas"
                     >
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M3 6h18" />
@@ -302,7 +302,7 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                         <path d="M19 6l-1 14H6L5 6" />
                         <path d="M10 11v6M14 11v6" />
                       </svg>
-                      <span>Desmarcar cadastrada</span>
+                      <span>Desagendar proposta</span>
                     </button>
                   </div>
                 </article>
@@ -313,31 +313,31 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
       ) : null}
 
       <div className="calendar-all-proposals">
-        <h3>Todas as Propostas Cadastradas ({proposals.length})</h3>
+        <h3>Todas as propostas agendadas ({proposals.length})</h3>
         {proposals.length === 0 ? (
-          <div className="status-card">Nenhuma proposta cadastrada na agenda.</div>
+          <div className="status-card">Nenhuma proposta agendada.</div>
         ) : (
-          <div className="analysis-list">
+          <div className="calendar-proposal-list">
             {proposals.map(p => {
               const link = p.linkContratacao ?? p.linkSistemaOrigem;
               return (
-                <article key={getFavoriteKey(p) ?? p.numeroCompra ?? Math.random()} className="analysis-card">
+                <article key={getProposalKey(p) ?? p.numeroCompra ?? Math.random()} className="calendar-proposal-card">
                   <header>
-                    <span className="analysis-status analysis-done">Cadastrada</span>
+                    <span className="calendar-proposal-status">Agendada</span>
                     <strong>{p.unidadeCompradora ?? p.orgao ?? 'Proposta'}</strong>
                     <span>{p.numeroCompra}</span>
                   </header>
                   <dl>
                     <dt>resumo do objeto</dt>
-                    <dd className="analysis-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
+                    <dd className="calendar-proposal-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
                     <dt>valor do edital</dt>
-                    <dd className="analysis-value">{p.valor ?? '—'}</dd>
+                    <dd className="calendar-proposal-value">{p.valor ?? '—'}</dd>
                     <dt>abertura da sessão</dt>
                     <dd>{formatDateTime(p.dataEncerramentoProposta)}</dd>
                     <dt>local</dt>
                     <dd>{p.local ?? '—'}</dd>
                   </dl>
-                  <div className="card-discard-row analysis-actions">
+                  <div className="card-discard-row">
                     {link ? (
                       <a
                         className="discard-toggle pncp-link"
@@ -359,17 +359,17 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                         type="button"
                         className="discard-toggle action-link"
                         onClick={() => void copyProposalLink(p)}
-                        aria-label={copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                        title={copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
+                        aria-label={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
+                        title={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
                       >
-                        {copiedKey === (getFavoriteKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
+                        {copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
                       </button>
                     ) : null}
                     <button
                       type="button"
                       className="discard-toggle"
                       onClick={() => onUnregister(p)}
-                      title="Remover da lista de cadastradas"
+                      title="Remover das propostas agendadas"
                     >
                       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M3 6h18" />
@@ -377,7 +377,7 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                         <path d="M19 6l-1 14H6L5 6" />
                         <path d="M10 11v6M14 11v6" />
                       </svg>
-                      <span>Desmarcar cadastrada</span>
+                      <span>Desagendar proposta</span>
                     </button>
                   </div>
                 </article>

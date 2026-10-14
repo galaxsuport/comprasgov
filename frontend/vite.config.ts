@@ -9,10 +9,8 @@ export default defineConfig(() => ({
     proxy: {
       '/api/pregoes': 'http://127.0.0.1:4174',
       '/api/auth': 'http://127.0.0.1:4174',
-      '/api/favorites': 'http://127.0.0.1:4174',
       '/api/discarded': 'http://127.0.0.1:4174',
       '/api/registered': 'http://127.0.0.1:4174',
-      '/api/analysis': 'http://127.0.0.1:4174',
       '/api/settings': 'http://127.0.0.1:4174',
       '/api': 'http://127.0.0.1:4174'
     }

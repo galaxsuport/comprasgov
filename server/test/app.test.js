@@ -9,7 +9,7 @@ import { createApiServer } from '../app.js';
 
 const username = 'test-user';
 const password = 'test-password';
-const favorite = {
+const proposal = {
   tipoSaida: 'oportunidade',
   idContratacaoPNCP: '123',
   linkContratacao: null,
@@ -27,7 +27,7 @@ let webhookUrl;
 
 before(async () => {
   testDir = mkdtempSync(join(tmpdir(), 'comprasgov-api-test-'));
-  databasePath = join(testDir, 'favorites.sqlite');
+  databasePath = join(testDir, 'comprasgov.sqlite');
   staticDir = join(testDir, 'public');
   mkdirSync(staticDir);
   writeFileSync(join(staticDir, 'index.html'), '<main>ComprasGov test</main>');
@@ -38,6 +38,21 @@ before(async () => {
   await new Promise(resolve => webhookServer.listen(0, '127.0.0.1', resolve));
   webhookUrl = `http://127.0.0.1:${webhookServer.address().port}/hook?token=fixture`;
   db = new Database(databasePath);
+  db.exec(`
+    CREATE TABLE favorites (
+      owner TEXT NOT NULL,
+      favorite_key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner, favorite_key)
+    )
+  `);
+  db.prepare('INSERT INTO favorites VALUES (?, ?, ?, ?)').run(
+    username,
+    'id:legacy',
+    JSON.stringify({ tipoSaida: 'oportunidade', idContratacaoPNCP: 'legacy' }),
+    Date.now()
+  );
   server = createApiServer({ db, username, password, staticDir, webhookUrl });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -60,9 +75,6 @@ async function login() {
 }
 
 test('requires authentication and creates an HttpOnly session', async () => {
-  const anonymousResponse = await fetch(`${baseUrl}/api/favorites`);
-  assert.equal(anonymousResponse.status, 401);
-
   const { response, cookie } = await login();
   assert.equal(response.status, 200);
   assert.match(response.headers.get('set-cookie'), /HttpOnly/);
@@ -70,6 +82,14 @@ test('requires authentication and creates an HttpOnly session', async () => {
 
   const session = await fetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: cookie } });
   assert.deepEqual(await session.json(), { authenticated: true, authRequired: true });
+});
+
+test('removes legacy favorites from the database and API', async () => {
+  assert.equal(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'favorites'").get(),
+    undefined
+  );
+  assert.equal((await fetch(`${baseUrl}/api/favorites`)).status, 404);
 });
 
 test('serves the frontend for page routes and rejects missing assets', async () => {
@@ -91,65 +111,13 @@ test('proxies procurement requests and preserves configured webhook parameters',
   assert.deepEqual(await response.json(), { url: '/hook?token=fixture&ufs=SP' });
 });
 
-test('stores and removes favorites for the authenticated account', async () => {
-  const { cookie } = await login();
-
-  const savedResponse = await fetch(`${baseUrl}/api/favorites`, {
-    method: 'POST',
-    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ favorite })
-  });
-  assert.equal(savedResponse.status, 200);
-  assert.deepEqual(await savedResponse.json(), favorite);
-
-  const listResponse = await fetch(`${baseUrl}/api/favorites`, { headers: { Cookie: cookie } });
-  assert.deepEqual(await listResponse.json(), [favorite]);
-
-  const deleted = await fetch(`${baseUrl}/api/favorites/id%3A123`, {
-    method: 'DELETE',
-    headers: { Cookie: cookie }
-  });
-  assert.equal(deleted.status, 204);
-
-  const emptyList = await fetch(`${baseUrl}/api/favorites`, { headers: { Cookie: cookie } });
-  assert.deepEqual(await emptyList.json(), []);
-});
-
-test('favorites remain available after restarting the API', async () => {
-  const { cookie } = await login();
-  await fetch(`${baseUrl}/api/favorites`, {
-    method: 'POST',
-    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ favorite })
-  });
-
-  await new Promise(resolve => server.close(resolve));
-  db.close();
-  db = new Database(databasePath);
-  server = createApiServer({ db, username, password, staticDir, webhookUrl });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  baseUrl = `http://127.0.0.1:${server.address().port}`;
-
-  const { cookie: renewedCookie } = await login();
-  const restored = await fetch(`${baseUrl}/api/favorites`, { headers: { Cookie: renewedCookie } });
-  assert.deepEqual(await restored.json(), [favorite]);
-});
-
-test('rejects invalid credentials and malformed favorites', async () => {
+test('rejects invalid credentials', async () => {
   const invalidLogin = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password: 'wrong' })
   });
   assert.equal(invalidLogin.status, 401);
-
-  const { cookie } = await login();
-  const invalidFavorite = await fetch(`${baseUrl}/api/favorites`, {
-    method: 'POST',
-    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ favorite: { tipoSaida: 'resumo' } })
-  });
-  assert.equal(invalidFavorite.status, 400);
 });
 
 test('changes the password and persists it over AUTH_PASSWORD', async () => {
@@ -448,38 +416,39 @@ test('stores registered proposals per user and restores them', async () => {
   }
 });
 
-test('runs an analysis job, tracks its status and stores the report', async () => {
-  let state = 'fila';
-  let startCounter = 1;
-  const seen = [];
-  const n8n = createWebhookServer((request, response) => {
-    let body = '';
-    request.on('data', chunk => (body += chunk));
-    request.on('end', () => {
-      seen.push({ method: request.method, url: request.url, key: request.headers['x-workflow-key'], body });
-      if (request.url === '/webhook/start') {
-        response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({
-          job_id: `job${startCounter}`, status: 'fila',
-          consultar: `GET /webhook/res?job_id=job${startCounter}&formato=json`,
-          relatorioHtml: `GET /webhook/res?job_id=job${startCounter}`, mensagem: 'iniciada'
-        }));
-      } else if (request.url.endsWith('formato=json')) {
-        response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ status: state, mensagem: `estado ${state}` }));
-      } else {
-        response.writeHead(200, { 'Content-Type': 'text/html' });
-        response.end('<h1>Relatório</h1><script>x()</script>');
-      }
-    });
-  });
-  await new Promise(resolve => n8n.listen(0, '127.0.0.1', resolve));
-  const analysisDb = new Database(':memory:');
-  const api = createApiServer({
-    db: analysisDb, username, password, staticDir, webhookUrl,
-    analysisWebhookUrl: `http://127.0.0.1:${n8n.address().port}/webhook/start`,
-    analysisWorkflowKey: 'secret-key'
-  });
+test('preserves analysis data across initialization without affecting proposals or settings', async () => {
+  const legacyDb = new Database(':memory:');
+  legacyDb.exec(`
+    CREATE TABLE analysis_jobs (
+      owner TEXT NOT NULL, job_id TEXT NOT NULL, proposal_key TEXT NOT NULL,
+      proposal_json TEXT NOT NULL, status TEXT NOT NULL, message TEXT,
+      consult_path TEXT NOT NULL, report_path TEXT NOT NULL, report_html TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      started_at INTEGER, completed_at INTEGER,
+      PRIMARY KEY (owner, job_id)
+    );
+    CREATE TABLE registered_proposals (
+      owner TEXT NOT NULL, proposal_key TEXT NOT NULL, value_json TEXT NOT NULL,
+      registered_at INTEGER NOT NULL, PRIMARY KEY (owner, proposal_key)
+    );
+    CREATE TABLE discarded_proposals (
+      owner TEXT NOT NULL, proposal_key TEXT NOT NULL, value_json TEXT NOT NULL,
+      discarded_at INTEGER NOT NULL, PRIMARY KEY (owner, proposal_key)
+    );
+    CREATE TABLE settings (
+      owner TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL, PRIMARY KEY (owner, key)
+    )
+  `);
+  legacyDb.prepare('INSERT INTO analysis_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(username, 'legacy-job', 'id:123', JSON.stringify(proposal), 'concluido', 'done',
+      '/consult', '/report', '<h1>Legacy report</h1>', 1, 2, 1, 2);
+  for (const table of ['registered_proposals', 'discarded_proposals']) {
+    legacyDb.prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?)`)
+      .run(username, 'id:123', JSON.stringify(proposal), 1);
+  }
+  legacyDb.prepare('INSERT INTO settings VALUES (?, ?, ?, ?)').run(username, 'deadline_days', '7', 1);
+  const api = createApiServer({ db: legacyDb, username, password, staticDir, webhookUrl });
   await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${api.address().port}`;
   try {
@@ -490,69 +459,31 @@ test('runs an analysis job, tracks its status and stores the report', async () =
     const cookie = loginResponse.headers.get('set-cookie').split(';', 1)[0];
     const headers = { Cookie: cookie, 'Content-Type': 'application/json' };
 
-    assert.equal((await fetch(`${url}/api/analysis`)).status, 401);
-    const invalid = await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal: favorite }) });
-    assert.equal(invalid.status, 400);
-
-    const proposal = { ...favorite, uasg: '928034', numeroCompra: '58/2026' };
-    const started = await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) });
-    const queued = await started.json();
-    assert.equal(started.status, 200);
-    assert.equal(queued.status, 'pendente');
-    assert.equal(seen.length, 0);
-
-    const again = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).json();
-    assert.equal(again.jobId, queued.jobId);
-
-    const startedJob = await fetch(`${url}/api/analysis/${queued.jobId}/start`, { method: 'POST', headers });
-    const job = await startedJob.json();
-    assert.equal(job.jobId, 'job1');
-    assert.equal(job.status, 'fila');
-    assert.deepEqual(JSON.parse(seen[0].body), { UASG: '928034', numeroCompra: '58/2026' });
-    assert.equal(seen[0].key, 'secret-key');
-
-    const repeated = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).json();
-    assert.equal(repeated.jobId, 'job1');
-    assert.equal(seen.length, 1);
-
-    const other = { ...proposal, idContratacaoPNCP: '999', numeroCompra: '1/2026' };
-    const pending = await (await fetch(`${url}/api/analysis`, { method: 'POST', headers, body: JSON.stringify({ proposal: other }) })).json();
-    assert.equal((await fetch(`${url}/api/analysis/${pending.jobId}/job`, { method: 'DELETE', headers })).status, 200);
-
-    state = 'processando';
-    const running = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
-    assert.equal(running.message, 'estado processando');
-    assert.equal(running.hasReport, false);
-    assert.equal((await fetch(`${url}/api/analysis/job2/report`, { headers })).status, 404);
-
-    state = 'erro';
-    const failed = await (await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).json();
-    assert.equal(failed.status, 'erro');
-    assert.equal((await fetch(`${url}/api/analysis/job1/start`, { method: 'POST', headers })).status, 200);
-    assert.equal(seen.filter(call => call.url === '/webhook/start').length, 1);
-    startCounter = 2;
-    const redone = await (await fetch(`${url}/api/analysis/job1/restart`, { method: 'POST', headers })).json();
-    assert.equal(redone.jobId, 'job2', JSON.stringify(redone));
-    assert.equal(redone.status, 'fila');
-    assert.equal((await fetch(`${url}/api/analysis/job1/refresh`, { method: 'POST', headers })).status, 404);
-
-    state = 'concluido';
-    const done = await (await fetch(`${url}/api/analysis/job2/refresh`, { method: 'POST', headers })).json();
-    assert.equal(done.status, 'concluido');
-    assert.equal(done.hasReport, true);
-    assert.ok(done.completedAt >= done.startedAt);
-
-    const report = await fetch(`${url}/api/analysis/job2/report`, { headers });
-    assert.match(await report.text(), /Relatório/);
+    assert.equal(legacyDb.prepare('SELECT count(*) AS count FROM analysis_jobs').get().count, 1);
+    const jobs = await (await fetch(`${url}/api/analysis`, { headers })).json();
+    assert.equal(jobs[0].jobId, 'legacy-job');
+    assert.equal(jobs[0].hasReport, true);
+    const report = await fetch(`${url}/api/analysis/legacy-job/report`, { headers });
+    assert.equal(report.status, 200);
+    assert.match(await report.text(), /Legacy report/);
     assert.match(report.headers.get('content-security-policy'), /sandbox/);
-
-    const list = await (await fetch(`${url}/api/analysis`, { headers })).json();
-    assert.equal(list.length, 1);
-    assert.equal(list[0].proposal.numeroCompra, '58/2026');
+    for (const [method, path] of [
+      ['POST', '/api/analysis/legacy-job/start'], ['POST', '/api/analysis/legacy-job/restart'],
+      ['DELETE', '/api/analysis/legacy-job/job']
+    ]) {
+      const response = await fetch(`${url}${path}`, { method, headers });
+      assert.equal(response.status, 404, `${method} ${path}`);
+    }
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), [proposal]);
+    assert.deepEqual(await (await fetch(`${url}/api/discarded`, { headers })).json(), [proposal]);
+    assert.equal((await (await fetch(`${url}/api/settings/deadline`, { headers })).json()).value, 7);
+    const tables = legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
+    const restarted = createApiServer({ db: legacyDb, username, password, staticDir, webhookUrl });
+    assert.deepEqual(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all(), tables);
+    assert.equal(restarted.listening, false);
   } finally {
     await new Promise(resolve => api.close(resolve));
-    await new Promise(resolve => n8n.close(resolve));
-    analysisDb.close();
+    legacyDb.close();
   }
 });
 
@@ -564,7 +495,7 @@ test('skips login when authentication is disabled for homologation', async () =>
   try {
     const session = await (await fetch(`${url}/api/auth/session`)).json();
     assert.deepEqual(session, { authenticated: true, authRequired: false });
-    assert.equal((await fetch(`${url}/api/favorites`)).status, 200);
+    assert.equal((await fetch(`${url}/api/favorites`)).status, 404);
   } finally {
     await new Promise(resolve => open.close(resolve));
     openDb.close();

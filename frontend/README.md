@@ -2,6 +2,8 @@
 
 Este projeto exibe os resultados do endpoint n8n diretamente em uma interface moderna.
 
+A situação do edital aparece nos badges do cabeçalho de cada card, junto da modalidade, SRP e modo de disputa.
+
 ## Instalação
 
 ```bash
@@ -32,9 +34,9 @@ npm run dev
 
 Para homologação local, configure `VITE_API_BASE_URL` em `.env.homolog.local`. No EasyPanel, configure `VITE_API_BASE_URL`, `AUTH_USERNAME` e `AUTH_PASSWORD` como variáveis do serviço.
 
-O container agora executa a API e serve a interface. Monte um volume persistente no caminho `/data` para que o banco SQLite de favoritos sobreviva a reinícios e atualizações.
+O container agora executa a API e serve a interface. Monte um volume persistente no caminho `/data` para que as configurações, propostas agendadas e propostas descartadas do banco SQLite sobrevivam a reinícios e atualizações.
 
-No desenvolvimento, o banco fica em `server/data/comprasgov.sqlite`. O login é validado no servidor e a sessão usa um cookie `HttpOnly`. Os favoritos ficam associados à conta autenticada e são compartilhados entre dispositivos. `AUTH_PASSWORD` deve ser configurada apenas no `.env` local ignorado pelo Git ou no ambiente do servidor; não use o prefixo `VITE_` para credenciais.
+No desenvolvimento, o banco fica em `server/data/comprasgov.sqlite`. O login é validado no servidor e a sessão usa um cookie `HttpOnly`. `AUTH_PASSWORD` deve ser configurada apenas no `.env` local ignorado pelo Git ou no ambiente do servidor; não use o prefixo `VITE_` para credenciais.
 
 A senha pode ser alterada em Configurações. A nova senha é guardada com hash no SQLite (não no `.env`) e passa a prevalecer sobre `AUTH_PASSWORD`; as demais sessões são encerradas. Para voltar à senha do ambiente, apague a linha correspondente da tabela `credentials`.
 
@@ -42,8 +44,12 @@ Em cada consulta a `/api/pregoes`, o servidor anexa ao webhook as configuraçõe
 
 ### Homologação sem login
 
-Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de login e o botão Sair, e usa a conta `AUTH_USERNAME` (ou `homologacao`) para guardar favoritos, descartadas e análises. `AUTH_USERNAME` e `AUTH_PASSWORD` deixam de ser obrigatórios. **Nunca defina essa variável em produção**: qualquer pessoa com acesso à URL passa a usar o app.
+Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de login e o botão Sair, e usa a conta `AUTH_USERNAME` (ou `homologacao`) para guardar propostas descartadas e propostas agendadas. `AUTH_USERNAME` e `AUTH_PASSWORD` deixam de ser obrigatórios. **Nunca defina essa variável em produção**: qualquer pessoa com acesso à URL passa a usar o app.
 
-### Análise de editais
+### Análise no card do edital
 
-O botão **Analisar** do card envia `{ "UASG", "numeroCompra" }` por POST ao endpoint `ANALYSIS_WEBHOOK_URL`, com o cabeçalho `X-Workflow-Key` definido por `ANALYSIS_WORKFLOW_KEY` (a chave fica só no servidor). O `job_id` e os dados do card são gravados no banco; a tela de análises consulta o endpoint `consultar` a cada 5 s para atualizar `status` e `mensagem` e, ao concluir, guarda o HTML de `relatorioHtml`, aberto em `/api/analysis/<job_id>/report` dentro de um sandbox sem scripts.
+O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n/Copilot e fica desabilitado como **Analisando**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
+
+A tabela `analysis_jobs` guarda os jobs e relatórios por conta, permitindo retomar o acompanhamento após recarregar a página. Os cards exibem job_id, tempo, status e mensagem; o acompanhamento consulta o serviço a cada 2 segundos. `pronto_para_agente` permanece intermediário. Falhas de comunicação são exibidas e não são tratadas como conclusão.
+
+Ao terminar, o card oferece **Refazer análise** e, quando disponível, **Resultado**. A nova análise substitui o registro e relatório anteriores depois que o serviço confirma o início; se a chamada falhar, o resultado anterior é preservado. O HTML externo é servido com sandbox sem scripts. Não há lista de análises nem card de análises no painel de controle. Dados excluídos pela remoção anterior não são recuperados.

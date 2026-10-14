@@ -93,31 +93,10 @@ export async function saveTerms(kind: TermKind, terms: string[]): Promise<string
   return ((await response.json()) as { terms: string[] }).terms;
 }
 
-export function getFavoriteKey(result: OportunidadeResultado): string | null {
+export function getProposalKey(result: OportunidadeResultado): string | null {
   if (result.idContratacaoPNCP) return `id:${result.idContratacaoPNCP}`;
   if (result.linkContratacao) return `link:${result.linkContratacao}`;
   return null;
-}
-
-export async function fetchFavorites(): Promise<OportunidadeResultado[]> {
-  const response = await fetch('/api/favorites');
-  if (!response.ok) throw new Error(await readApiError(response));
-  return response.json() as Promise<OportunidadeResultado[]>;
-}
-
-export async function addFavorite(favorite: OportunidadeResultado): Promise<OportunidadeResultado> {
-  const response = await fetch('/api/favorites', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ favorite })
-  });
-  if (!response.ok) throw new Error(await readApiError(response));
-  return response.json() as Promise<OportunidadeResultado>;
-}
-
-export async function removeFavorite(key: string): Promise<void> {
-  const response = await fetch(`/api/favorites/${encodeURIComponent(key)}`, { method: 'DELETE' });
-  if (!response.ok) throw new Error(await readApiError(response));
 }
 
 export async function fetchDiscarded(): Promise<OportunidadeResultado[]> {
@@ -160,62 +139,48 @@ export async function unregisterProposal(key: string): Promise<void> {
   if (!response.ok) throw new Error(await readApiError(response));
 }
 
+export async function logout(): Promise<void> {
+  const response = await fetch(`${AUTH_API_BASE_URL}/logout`, { method: 'POST' });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
 export interface AnalysisJob {
   jobId: string;
+  proposalKey: string;
   status: string;
   message: string | null;
-  consultar: string | null;
-  relatorioHtml: string | null;
   hasReport: boolean;
-  proposal: OportunidadeResultado;
-  createdAt: number;
-  updatedAt: number;
   startedAt: number;
   completedAt: number | null;
 }
 
-export async function fetchAnalyses(): Promise<AnalysisJob[]> {
-  const response = await fetch('/api/analysis');
+export function getAnalysisParams(result: OportunidadeResultado): { uasg: string; numeroCompra: string } | null {
+  const code = [result.cadastroProposta, result.linkSistemaOrigem]
+    .map(value => value?.match(/compra=(\d{6})(\d{2})(\d{5})(\d{4})(?:\D|$)/)).find(Boolean);
+  const uasg = result.uasg ?? result.unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? code?.[1];
+  const numeroCompra = result.numeroCompra ?? (code ? `${Number(code[3])}/${code[4]}` : null);
+  return uasg && numeroCompra && /^\d{4,8}$/.test(uasg) && /^\d+\/\d{4}$/.test(numeroCompra)
+    ? { uasg, numeroCompra } : null;
+}
+
+export async function fetchAnalyses(signal?: AbortSignal): Promise<AnalysisJob[]> {
+  const response = await fetch('/api/analysis', { signal });
   if (!response.ok) throw new Error(await readApiError(response));
   return response.json() as Promise<AnalysisJob[]>;
 }
 
-export async function enqueueAnalysis(proposal: OportunidadeResultado): Promise<AnalysisJob> {
+export async function startAnalysis(proposal: OportunidadeResultado): Promise<AnalysisJob> {
   const response = await fetch('/api/analysis', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ proposal })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proposal })
   });
   if (!response.ok) throw new Error(await readApiError(response));
   return response.json() as Promise<AnalysisJob>;
 }
 
-export async function beginAnalysis(jobId: string): Promise<AnalysisJob> {
-  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/start`, { method: 'POST' });
+export async function refreshAnalysis(jobId: string, signal?: AbortSignal): Promise<AnalysisJob> {
+  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/refresh`, { method: 'POST', signal });
   if (!response.ok) throw new Error(await readApiError(response));
   return response.json() as Promise<AnalysisJob>;
-}
-
-export async function restartAnalysis(jobId: string): Promise<AnalysisJob> {
-  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/restart`, { method: 'POST' });
-  if (!response.ok) throw new Error(await readApiError(response));
-  return response.json() as Promise<AnalysisJob>;
-}
-
-export async function removeAnalysis(jobId: string): Promise<void> {
-  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/job`, { method: 'DELETE' });
-  if (!response.ok) throw new Error(await readApiError(response));
-}
-
-export async function refreshAnalysis(jobId: string): Promise<AnalysisJob> {
-  const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/refresh`, { method: 'POST' });
-  if (!response.ok) throw new Error(await readApiError(response));
-  return response.json() as Promise<AnalysisJob>;
-}
-
-export async function logout(): Promise<void> {
-  const response = await fetch(`${AUTH_API_BASE_URL}/logout`, { method: 'POST' });
-  if (!response.ok) throw new Error(await readApiError(response));
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
@@ -252,18 +217,6 @@ function buildApiUrl(filters: FetchFilters = {}): string {
 
   const queryString = params.toString();
   return queryString ? `${baseUrl}?${queryString}` : baseUrl;
-}
-
-const COMPRA_CODE = /compra=(\d{6})(\d{2})(\d{5})(\d{4})(?:\D|$)/;
-
-// Compras.gov.br: UASG(6) + modalidade(2) + número(5) + ano(4) no parâmetro "compra".
-export function getAnalysisParams(result: OportunidadeResultado): { uasg: string; numeroCompra: string } | null {
-  const code = [result.cadastroProposta, result.linkSistemaOrigem]
-    .map(value => value?.match(COMPRA_CODE))
-    .find(Boolean);
-  const uasg = result.uasg ?? result.unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? code?.[1];
-  const numeroCompra = result.numeroCompra ?? (code ? `${Number(code[3])}/${code[4]}` : null);
-  return uasg && numeroCompra ? { uasg, numeroCompra } : null;
 }
 
 function buildNumeroCompra(item: Record<string, unknown>) {
