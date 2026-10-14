@@ -6,7 +6,11 @@ A situação do edital aparece nos badges do cabeçalho de cada card, junto da m
 
 Ao descartar uma proposta, todas as ações do card ficam desabilitadas, incluindo análise/cancelamento, resultado, calendário e links. Somente **Desfazer descartar** permanece disponível. Descartar não cancela automaticamente uma análise em andamento.
 
+Propostas agendadas exigem confirmação **Sim/Não** antes do descarte, avisando que o agendamento também será removido. **Não** ou Escape preservam ambos os registros; **Sim** descarta e remove o agendamento em uma única transação. Desfazer o descarte não restaura o agendamento.
+
 O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais e a lista seguem esse filtro. A data considerada continua sendo o encerramento da proposta, com abertura e publicação como alternativas. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário.
+
+O botão **Visualizar edital** nos cards do calendário abre a proposta salva no card principal, com suas ações e análise, mesmo sem resultados de pesquisa carregados. A pesquisa anterior é preservada e pode ser retomada por **Voltar aos resultados da pesquisa**.
 
 ## Instalação
 

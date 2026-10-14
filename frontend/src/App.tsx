@@ -939,9 +939,21 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
+  const [discardConfirmation, setDiscardConfirmation] = useState<OportunidadeResultado | null>(null);
+  const discardDialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (discardConfirmation) discardDialogRef.current?.showModal();
+  }, [discardConfirmation]);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState<OportunidadeResultado | null>(null);
+  const proposalCardsRef = useRef<HTMLElement>(null);
   const [proposalOperations, setProposalOperations] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (selectedProposal && !showCalendar && !settingsOpen) {
+      proposalCardsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [selectedProposal, showCalendar, settingsOpen]);
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
   const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
   const analysisStartingRef = useRef(new Set<string>());
@@ -1064,6 +1076,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     async function load() {
       try {
         setLoading(true);
+        setSelectedProposal(null);
         setResultados([]);
         setError(null);
         setPopupError(null);
@@ -1168,16 +1181,22 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
       .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas agendadas.'));
   }, []);
 
-  const toggleDiscard = async (result: OportunidadeResultado) => {
+  const toggleDiscard = async (result: OportunidadeResultado, confirmed = false) => {
     const key = getProposalKey(result);
     if (!key || proposalOperations.has(key)) return;
 
     const discarding = !discardedKeys.has(key);
+    if (discarding && !confirmed && registered.some(item => getProposalKey(item) === key)) {
+      setDiscardConfirmation(result);
+      return;
+    }
     setProposalOperations(current => new Set(current).add(key));
     setAppError(null);
     try {
-      if (discarding) await discardProposal(result);
-      else await restoreProposal(key);
+      if (discarding) {
+        await discardProposal(result);
+        setRegistered(current => current.filter(item => getProposalKey(item) !== key));
+      } else await restoreProposal(key);
       setDiscarded(current => discarding
         ? [result, ...current.filter(item => getProposalKey(item) !== key)]
         : current.filter(item => getProposalKey(item) !== key));
@@ -1238,7 +1257,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     }
   };
 
-  const baseResults = showDiscarded ? discarded : orderedResults;
+  const baseResults = showDiscarded ? discarded : selectedProposal ? [selectedProposal] : orderedResults;
   const summaryResults = showDiscarded
     ? baseResults
     : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getProposalKey(item) ?? ''));
@@ -1247,6 +1266,33 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   return (
     <div className="app-layout">
       <FilterControls onFilterChange={handleFilterChange} loading={loading} />
+
+      {discardConfirmation ? (
+        <dialog
+          ref={discardDialogRef}
+          className="webhook-popup discard-confirmation"
+          aria-labelledby="discard-confirmation-title"
+          aria-describedby="discard-confirmation-message"
+          onCancel={() => setDiscardConfirmation(null)}
+        >
+          <h2 id="discard-confirmation-title">Descartar proposta agendada?</h2>
+          <p id="discard-confirmation-message">
+            Esta proposta está agendada. Ao descartá-la, o agendamento também será removido. Deseja continuar?
+          </p>
+          <div className="card-discard-row">
+            <button type="button" className="discard-toggle" autoFocus onClick={() => setDiscardConfirmation(null)}>
+              Não
+            </button>
+            <button type="button" className="discard-toggle" onClick={() => {
+              const proposal = discardConfirmation;
+              setDiscardConfirmation(null);
+              void toggleDiscard(proposal, true);
+            }}>
+              Sim
+            </button>
+          </div>
+        </dialog>
+      ) : null}
 
       {popupError ? (
         <WebhookErrorPopup
@@ -1266,6 +1312,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             setShowDiscarded(false);
             setSettingsOpen(false);
             setSummaryFilter(null);
+            setSelectedProposal(null);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           settingsOpen={settingsOpen}
@@ -1281,6 +1328,13 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           <CalendarPage
             proposals={registered}
             onUnregister={toggleRegisterProposal}
+            onViewProposal={proposal => {
+              setSelectedProposal(proposal);
+              setShowCalendar(false);
+              setShowDiscarded(false);
+              setSettingsOpen(false);
+              setSummaryFilter(null);
+            }}
             onBack={() => setShowCalendar(false)}
           />
         ) : settingsOpen ? (
@@ -1317,7 +1371,10 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             registered={registered}
             discarded={discarded}
             activeFilter={summaryFilter}
-            onSelectFilter={handleSummaryFilterChange}
+            onSelectFilter={filter => {
+              setSelectedProposal(null);
+              handleSummaryFilterChange(filter);
+            }}
             onOpenCalendar={() => {
               setSettingsOpen(false);
               setShowDiscarded(false);
@@ -1343,7 +1400,12 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
               />
             ) : null}
             {visibleResults.length > 0 ? (
-              <section className="cards-shell">
+              <section className="cards-shell" ref={proposalCardsRef}>
+                {selectedProposal && !showDiscarded ? (
+                  <button type="button" className="logout-button" onClick={() => setSelectedProposal(null)}>
+                    Voltar aos resultados da pesquisa
+                  </button>
+                ) : null}
                 {visibleResults.map((item, index) => (
                   <ResultCard
                     key={item.tipoSaida === 'oportunidade'

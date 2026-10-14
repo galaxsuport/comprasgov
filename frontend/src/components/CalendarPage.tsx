@@ -7,6 +7,7 @@ import { getProposalKey } from '../api';
 interface CalendarPageProps {
   proposals: OportunidadeResultado[];
   onUnregister: (proposal: OportunidadeResultado) => void;
+  onViewProposal: (proposal: OportunidadeResultado) => void;
   onBack: () => void;
 }
 
@@ -27,7 +28,7 @@ function getProposalDateKey(proposal: OportunidadeResultado): string | null {
   return `${year}-${month}-${day}`;
 }
 
-export default function CalendarPage({ proposals, onUnregister, onBack }: CalendarPageProps) {
+export default function CalendarPage({ proposals, onUnregister, onViewProposal, onBack }: CalendarPageProps) {
   const today = new Date();
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const upcomingProposals = useMemo(() => proposals.filter(proposal => {
@@ -266,6 +267,13 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                     <dd>{p.local ?? '—'}</dd>
                   </dl>
                   <div className="card-discard-row">
+                    <button type="button" className="discard-toggle" onClick={() => onViewProposal(p)}>
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      <span>Visualizar edital</span>
+                    </button>
                     {link ? (
                       <a
                         className="discard-toggle pncp-link"
@@ -341,6 +349,13 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
                     <dd>{p.local ?? '—'}</dd>
                   </dl>
                   <div className="card-discard-row">
+                    <button type="button" className="discard-toggle" onClick={() => onViewProposal(p)}>
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      <span>Visualizar edital</span>
+                    </button>
                     {link ? (
                       <a
                         className="discard-toggle pncp-link"

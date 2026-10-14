@@ -1349,6 +1349,14 @@ body {
   transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
 }
 
+.discard-confirmation {
+  margin: auto;
+}
+
+.discard-confirmation::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
 .discard-toggle:hover:not(:disabled) {
   border-color: #f87171;
   background: rgba(248, 113, 113, 0.12);

@@ -376,12 +376,19 @@ test('stores discarded proposals per user and restores them', async () => {
     const headers = { Cookie: loginResponse.headers.get('set-cookie').split(';', 1)[0], 'Content-Type': 'application/json' };
     const proposal = { tipoSaida: 'oportunidade', idContratacaoPNCP: 'abc-1', objeto: 'Servidor' };
 
+    assert.equal((await fetch(`${url}/api/registered`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).status, 200);
+    isolatedDb.prepare('INSERT INTO registered_proposals (owner, proposal_key, value_json, registered_at) VALUES (?, ?, ?, ?)')
+      .run('another-account', 'id:abc-1', JSON.stringify(proposal), Date.now());
     assert.equal((await fetch(`${url}/api/discarded`, { method: 'POST', headers, body: JSON.stringify({ proposal: { tipoSaida: 'resumo' } }) })).status, 400);
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), [proposal]);
     assert.equal((await fetch(`${url}/api/discarded`, { method: 'POST', headers, body: JSON.stringify({ proposal }) })).status, 200);
     assert.deepEqual(await (await fetch(`${url}/api/discarded`, { headers })).json(), [proposal]);
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), []);
+    assert.equal(isolatedDb.prepare('SELECT count(*) AS count FROM registered_proposals WHERE owner = ?').get('another-account').count, 1);
 
     assert.equal((await fetch(`${url}/api/discarded/${encodeURIComponent('id:abc-1')}`, { method: 'DELETE', headers })).status, 204);
     assert.deepEqual(await (await fetch(`${url}/api/discarded`, { headers })).json(), []);
+    assert.deepEqual(await (await fetch(`${url}/api/registered`, { headers })).json(), []);
   } finally {
     await new Promise(resolve => isolated.close(resolve));
     isolatedDb.close();

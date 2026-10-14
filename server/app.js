@@ -424,6 +424,10 @@ export function createApiServer({
   const deleteRegistered = db.prepare(
     'DELETE FROM registered_proposals WHERE owner = ? AND proposal_key = ?'
   );
+  const discardAndUnregister = db.transaction((owner, normalized) => {
+    saveDiscarded.run(owner, normalized.key, normalized.serialized, Date.now());
+    deleteRegistered.run(owner, normalized.key);
+  });
   const cookieOptions = `Path=/; HttpOnly; SameSite=Strict${secureCookies ? '; Secure' : ''}`;
   const startingAnalyses = new Map();
   const cancellingAnalyses = new Set();
@@ -737,7 +741,7 @@ export function createApiServer({
           jsonResponse(response, 400, { error: 'A proposta enviada não é válida.' });
           return;
         }
-        saveDiscarded.run(session.username, normalized.key, normalized.serialized, Date.now());
+        discardAndUnregister(session.username, normalized);
         jsonResponse(response, 200, normalized.value);
         return;
       }

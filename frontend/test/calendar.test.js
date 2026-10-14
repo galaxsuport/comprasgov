@@ -31,7 +31,7 @@ const { default: CalendarPage } = await import(moduleUrl(source));
 
 function render(proposals) {
   return renderToStaticMarkup(createElement(CalendarPage, {
-    proposals, onUnregister() {}, onBack() {}
+    proposals, onUnregister() {}, onViewProposal() {}, onBack() {}
   }));
 }
 
@@ -57,6 +57,7 @@ test('calendar filters grid, counts and list by local day, retaining all of toda
     assert.ok(!html.includes(text), text);
   }
   assert.equal((html.match(/class="day-badge"/g) ?? []).length, 3);
+  assert.equal((html.match(/Visualizar edital/g) ?? []).length, 4);
   assert.equal(proposals.length, 8);
 
   t.mock.timers.setTime(new Date(2026, 9, 15, 0, 1).getTime());
