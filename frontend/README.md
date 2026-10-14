@@ -54,6 +54,11 @@ O webhook irmão `pncp-cancelar` recebe `{ "job_id" }` com a mesma autenticaçã
 
 A tabela `analysis_jobs` guarda os jobs e relatórios por conta, permitindo retomar o acompanhamento após recarregar a página. Os cards exibem job_id, status e mensagem de progresso limitada a 255 caracteres na interface, API e banco. Mensagens antigas maiores são truncadas na inicialização da API. O tempo de análise aparece somente ao finalizar, com duração fixa; o acompanhamento consulta o serviço a cada 2 segundos. `pronto_para_agente` permanece intermediário. Falhas de comunicação são exibidas e não são tratadas como conclusão.
 
+Na inicialização, a API remove somente placeholders do fluxo antigo: status
+`pendente`, ID `pendente-*`, endereços de consulta/relatório vazios e nenhum
+relatório salvo. Eles nunca receberam protocolo externo e não devem gerar
+polling. Jobs reais e relatórios existentes são preservados.
+
 Ao terminar, o card oferece **Refazer análise** e, quando disponível, **Resultado**. A nova análise substitui o registro e relatório anteriores depois que o serviço confirma o início; se a chamada falhar, o resultado anterior é preservado. O HTML externo é servido com sandbox sem scripts. Não há lista de análises nem card de análises no painel de controle. Dados excluídos pela remoção anterior não são recuperados.
 
 ### Diagnóstico de comunicação

@@ -443,6 +443,9 @@ test('preserves analysis data across initialization without affecting proposals 
   legacyDb.prepare('INSERT INTO analysis_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(username, 'legacy-job', 'id:123', JSON.stringify(proposal), 'concluido', 'x'.repeat(300),
       '/consult', '/report', '<h1>Legacy report</h1>', 1, 2, 1, 2);
+  legacyDb.prepare('INSERT INTO analysis_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(username, 'pendente-obsolete', 'id:obsolete', JSON.stringify(proposal), 'pendente', 'Aguardando início',
+      '', '', null, 1, 2, null, null);
   for (const table of ['registered_proposals', 'discarded_proposals']) {
     legacyDb.prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?)`)
       .run(username, 'id:123', JSON.stringify(proposal), 1);

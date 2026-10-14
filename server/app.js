@@ -321,6 +321,13 @@ export function createApiServer({
   for (const column of ['started_at', 'completed_at']) {
     if (!analysisColumns.includes(column)) db.exec(`ALTER TABLE analysis_jobs ADD COLUMN ${column} INTEGER`);
   }
+  const obsoleteAnalyses = db.prepare(`
+    DELETE FROM analysis_jobs
+    WHERE status = 'pendente' AND job_id GLOB 'pendente-*'
+      AND trim(consult_path) = '' AND trim(report_path) = ''
+      AND coalesce(report_html, '') = ''
+  `).run().changes;
+  if (obsoleteAnalyses) console.info(`Removidos ${obsoleteAnalyses} registros legados de análise sem protocolo externo.`);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS credentials (
