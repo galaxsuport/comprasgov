@@ -4,6 +4,10 @@ Este projeto exibe os resultados do endpoint n8n diretamente em uma interface mo
 
 A situação do edital aparece nos badges do cabeçalho de cada card, junto da modalidade, SRP e modo de disputa.
 
+Ao descartar uma proposta, todas as ações do card ficam desabilitadas, incluindo análise/cancelamento, resultado, calendário e links. Somente **Desfazer descartar** permanece disponível. Descartar não cancela automaticamente uma análise em andamento.
+
+O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais e a lista seguem esse filtro. A data considerada continua sendo o encerramento da proposta, com abertura e publicação como alternativas. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário.
+
 ## Instalação
 
 ```bash

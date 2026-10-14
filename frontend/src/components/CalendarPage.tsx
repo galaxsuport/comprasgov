@@ -28,10 +28,17 @@ function getProposalDateKey(proposal: OportunidadeResultado): string | null {
 }
 
 export default function CalendarPage({ proposals, onUnregister, onBack }: CalendarPageProps) {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const upcomingProposals = useMemo(() => proposals.filter(proposal => {
+    const dateKey = getProposalDateKey(proposal);
+    return dateKey !== null && dateKey >= todayKey;
+  }), [proposals, todayKey]);
+
   // Mapa de data 'YYYY-MM-DD' -> propostas
   const proposalsByDate = useMemo(() => {
     const map = new Map<string, OportunidadeResultado[]>();
-    for (const p of proposals) {
+    for (const p of upcomingProposals) {
       const dateKey = getProposalDateKey(p);
       if (!dateKey) continue;
       const list = map.get(dateKey) ?? [];
@@ -39,15 +46,13 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
       map.set(dateKey, list);
     }
     return map;
-  }, [proposals]);
+  }, [upcomingProposals]);
 
   // Encontra o mês inicial baseado na primeira data com proposta futura ou presente, senão o mês atual
   const initialDate = useMemo(() => {
     const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const sortedDates = Array.from(proposalsByDate.keys()).sort();
-    const futureOrToday = sortedDates.find(d => d >= todayStr);
-    const target = futureOrToday ?? sortedDates[0];
+    const target = sortedDates[0];
     if (target) {
       const [y, m] = target.split('-').map(Number);
       return new Date(y, m - 1, 1);
@@ -59,11 +64,6 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
-
-  const todayKey = useMemo(() => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  }, []);
 
   const goToToday = () => {
     const today = new Date();
@@ -167,9 +167,9 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
         <div>
           <h2>Propostas agendadas</h2>
           <p className="filter-hint">
-            {proposals.length === 0
-              ? 'Nenhuma proposta agendada ainda. Use o botão "Agendar proposta" nos resultados da pesquisa para adicionar.'
-              : `${proposals.length} proposta${proposals.length === 1 ? '' : 's'} agendada${proposals.length === 1 ? '' : 's'}.`}
+            {upcomingProposals.length === 0
+              ? 'Nenhuma proposta agendada para hoje ou datas futuras. Use o botão "Agendar proposta" nos resultados da pesquisa para adicionar.'
+              : `${upcomingProposals.length} proposta${upcomingProposals.length === 1 ? '' : 's'} agendada${upcomingProposals.length === 1 ? '' : 's'} para hoje ou datas futuras.`}
           </p>
         </div>
         <button type="button" className="logout-button" onClick={onBack}>
@@ -316,12 +316,12 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
       ) : null}
 
       <div className="calendar-all-proposals">
-        <h3>Todas as propostas agendadas ({proposals.length})</h3>
-        {proposals.length === 0 ? (
-          <div className="status-card">Nenhuma proposta agendada.</div>
+        <h3>Todas as propostas agendadas ({upcomingProposals.length})</h3>
+        {upcomingProposals.length === 0 ? (
+          <div className="status-card">Nenhuma proposta agendada para hoje ou datas futuras.</div>
         ) : (
           <div className="calendar-proposal-list">
-            {proposals.map(p => {
+            {upcomingProposals.map(p => {
               const link = p.linkContratacao ?? p.linkSistemaOrigem;
               return (
                 <article key={getProposalKey(p) ?? p.numeroCompra ?? Math.random()} className="calendar-proposal-card">

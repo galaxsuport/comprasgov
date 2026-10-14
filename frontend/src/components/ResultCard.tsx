@@ -130,6 +130,7 @@ export default function ResultCard({
               type="button"
               className="calendar-card-toggle"
               onClick={onOpenCalendar}
+              disabled={isDiscarded}
               aria-label="Abrir propostas agendadas"
               title="Abrir propostas agendadas"
             >
@@ -220,9 +221,9 @@ export default function ResultCard({
         {onAnalyze ? (
           <button
             type="button"
-            className="discard-toggle"
+            className={`discard-toggle${!analysisRunning && !analysisCancelling ? analysisFinished ? ' reanalyze-btn' : ' analyze-btn' : ''}`}
             onClick={() => analysisRunning ? onCancelAnalysis?.(result) : onAnalyze(result)}
-            disabled={analysisCancelling || (analysisRunning ? !onCancelAnalysis : isDiscarded || !getAnalysisParams(result))}
+            disabled={isDiscarded || analysisCancelling || (analysisRunning ? !onCancelAnalysis : !getAnalysisParams(result))}
             title={analysisRunning ? 'Cancelar análise e excluir os dados gerados'
               : !getAnalysisParams(result) ? 'UASG ou número da compra indisponível'
               : analysisFinished ? 'Iniciar uma nova análise' : 'Analisar edital'}
@@ -235,8 +236,20 @@ export default function ResultCard({
           </button>
         ) : null}
         {analysisJob?.hasReport && !analysisStarting ? (
-          <a className="discard-toggle" href={`/api/analysis/${encodeURIComponent(analysisJob.jobId)}/report`} target="_blank" rel="noreferrer">
-            Resultado
+          <a
+            className="discard-toggle report-link"
+            href={isDiscarded ? undefined : `/api/analysis/${encodeURIComponent(analysisJob.jobId)}/report`}
+            aria-disabled={isDiscarded || undefined}
+            tabIndex={isDiscarded ? -1 : undefined}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="8" y="3" width="8" height="4" rx="1" />
+              <path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+              <path d="M8 12h8M8 16h8" />
+            </svg>
+            <span>Resultado</span>
           </a>
         ) : null}
         {onToggleRegister ? (
@@ -278,6 +291,7 @@ export default function ResultCard({
             type="button"
             className="discard-toggle action-link"
             onClick={() => void copyProposalLink(result.cadastroProposta!)}
+            disabled={isDiscarded}
             aria-label={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
             title={proposalLinkCopied ? 'Link copiado' : 'Copiar link da proposta'}
           >

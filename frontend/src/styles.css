@@ -1327,7 +1327,7 @@ body {
   color: #34d399;
 }
 
-.pncp-link[aria-disabled='true'] {
+.discard-toggle[aria-disabled='true'] {
   opacity: 0.4;
   pointer-events: none;
 }
@@ -1359,6 +1359,31 @@ body {
   border-color: #facc15;
   background: rgba(250, 204, 21, 0.12);
   color: #facc15;
+}
+
+.discard-toggle.report-link {
+  border-color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  color: #60a5fa;
+  text-decoration: none;
+}
+
+.discard-toggle.reanalyze-btn:hover:not(:disabled) {
+  border-color: #ff7f50;
+  background: rgba(255, 127, 80, 0.12);
+  color: #ffa07a;
+}
+
+.discard-toggle.analyze-btn:hover:not(:disabled) {
+  border-color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  color: #93c5fd;
+}
+
+.discard-toggle.report-link:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
 }
 
 .discard-toggle:disabled {
