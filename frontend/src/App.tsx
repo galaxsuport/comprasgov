@@ -8,6 +8,7 @@ import {
   unregisterProposal,
   fetchAnalyses,
   startAnalysis,
+  cancelAnalysis,
   refreshAnalysis,
   getAnalysisParams,
   type AnalysisJob,
@@ -34,11 +35,6 @@ interface FetchFilters {
   ufs?: string;
   uasg?: string;
 }
-
-const TODAS_UFS = [
-  'AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
-  'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'
-];
 
 const REGIOES = {
   Norte: ['AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO'],
@@ -841,12 +837,15 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
 
   useEffect(() => {
     fetch('/api/auth/company')
-      .then(response => (response.ok ? response.json() as Promise<{ value: string; title: string }> : null))
+      .then(response => {
+        if (!response.ok) throw new Error(`Não foi possível carregar a identificação (HTTP ${response.status}).`);
+        return response.json() as Promise<{ value: string; title: string }>;
+      })
       .then(data => {
         if (data?.value) setCompanyName(data.value);
         if (data?.title) setTitle(data.title);
       })
-      .catch(() => undefined);
+      .catch(err => setError(err instanceof Error ? err.message : 'Não foi possível carregar a identificação.'));
   }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -936,6 +935,7 @@ function CountdownSpinner() {
 function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: () => void }) {
   const [resultados, setResultados] = useState<PregaoResultado[]>([]);
   const [appError, setAppError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
@@ -945,6 +945,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
   const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
   const analysisStartingRef = useRef(new Set<string>());
+  const [analysisCancellingKeys, setAnalysisCancellingKeys] = useState<Set<string>>(() => new Set());
+  const analysisCancellingRef = useRef(new Set<string>());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -957,24 +959,54 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   }, []);
 
   useEffect(() => {
-    const running = analysisJobs.filter(job => !isTerminalAnalysis(job));
+    const running = analysisJobs.filter(job => !isTerminalAnalysis(job) && !analysisCancellingKeys.has(job.proposalKey));
     if (running.length === 0) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
+      const errors: string[] = [];
       const updates = await Promise.all(running.map(async job => {
         try {
           return await refreshAnalysis(job.jobId, controller.signal);
         } catch (err) {
-          if (!controller.signal.aborted) setAppError(err instanceof Error ? err.message : 'Não foi possível acompanhar a análise.');
+          if (!controller.signal.aborted) errors.push(err instanceof Error ? err.message : 'Não foi possível acompanhar a análise.');
           return job;
         }
       }));
       if (!controller.signal.aborted) {
+        setAnalysisError(errors[0] ?? null);
         setAnalysisJobs(current => current.map(job => updates.find(update => update.jobId === job.jobId) ?? job));
       }
     }, 2000);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [analysisJobs]);
+  }, [analysisJobs, analysisCancellingKeys]);
+
+  const cancelProposalAnalysis = async (proposal: OportunidadeResultado) => {
+    const key = getProposalKey(proposal);
+    if (!key || analysisCancellingRef.current.has(key)) return;
+    analysisCancellingRef.current.add(key);
+    setAnalysisCancellingKeys(current => new Set(current).add(key));
+    setAppError(null);
+    setAnalysisError(null);
+    try {
+      await cancelAnalysis(key);
+      setAnalysisJobs(current => current.filter(job => job.proposalKey !== key));
+    } catch (err) {
+      setAppError(err instanceof Error ? err.message : 'Não foi possível cancelar a análise.');
+      try {
+        const jobs = await fetchAnalyses();
+        setAnalysisJobs(jobs);
+      } catch (reloadError) {
+        setAnalysisError(reloadError instanceof Error ? reloadError.message : 'Não foi possível recuperar o acompanhamento.');
+      }
+    } finally {
+      analysisCancellingRef.current.delete(key);
+      setAnalysisCancellingKeys(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
 
   const analyzeProposal = async (proposal: OportunidadeResultado) => {
     const key = getProposalKey(proposal);
@@ -983,15 +1015,18 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
       setAppError('UASG ou número da compra indisponível para análise.');
       return;
     }
-    if (analysisStartingRef.current.has(key)) return;
+    if (analysisStartingRef.current.has(key) || analysisCancellingRef.current.has(key)) return;
     analysisStartingRef.current.add(key);
     setAnalysisStartingKeys(current => new Set(current).add(key));
     setAppError(null);
+    setAnalysisError(null);
     try {
       const job = await startAnalysis({ ...proposal, ...params });
-      setAnalysisJobs(current => [job, ...current.filter(item => item.proposalKey !== key)]);
+      if (!analysisCancellingRef.current.has(key)) {
+        setAnalysisJobs(current => [job, ...current.filter(item => item.proposalKey !== key)]);
+      }
     } catch (err) {
-      setAppError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
+      if (!analysisCancellingRef.current.has(key)) setAppError(err instanceof Error ? err.message : 'Não foi possível iniciar a análise.');
     } finally {
       analysisStartingRef.current.delete(key);
       setAnalysisStartingKeys(current => {
@@ -1009,7 +1044,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   useEffect(() => {
     Promise.all(BRANDING_FIELDS.map(({ kind }) => fetchText(kind)))
       .then(([companyName, title, subtitle]) => setBranding({ companyName, title, subtitle }))
-      .catch(() => undefined);
+      .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar a identificação.'));
   }, []);
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>(null);
   const [loading, setLoading] = useState(false);
@@ -1024,6 +1059,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
 
     const controller = new AbortController();
     let cancelled = false;
+    let progressInterval: ReturnType<typeof setInterval> | undefined;
 
     async function load() {
       try {
@@ -1043,7 +1079,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
         ];
         
         let stepIndex = 0;
-        const progressInterval = setInterval(() => {
+        progressInterval = setInterval(() => {
           if (stepIndex < steps.length - 1) {
             stepIndex++;
             setLoadingStep(steps[stepIndex]);
@@ -1066,6 +1102,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           setError(err.message);
         }
       } finally {
+        clearInterval(progressInterval);
         if (!cancelled) {
           setLoading(false);
           setLoadingStep('');
@@ -1077,6 +1114,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
 
     return () => {
       cancelled = true;
+      clearInterval(progressInterval);
       controller.abort();
     };
   }, [filters]);
@@ -1127,7 +1165,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
       .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas descartadas.'));
     fetchRegistered()
       .then(setRegistered)
-      .catch(() => undefined);
+      .catch(err => setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas agendadas.'));
   }, []);
 
   const toggleDiscard = async (result: OportunidadeResultado) => {
@@ -1254,8 +1292,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
         ) : (
         <>
 
-        {appError ? (
-          <div className="status-card status-error" role="alert">{appError}</div>
+        {appError || analysisError ? (
+          <div className="status-card status-error" role="alert">{appError ?? analysisError}</div>
         ) : null}
 
         {loading ? (
@@ -1326,6 +1364,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
                       && discardedKeys.has(getProposalKey(item) ?? '')}
                     onToggleDiscard={toggleDiscard}
                     onAnalyze={analyzeProposal}
+                    onCancelAnalysis={cancelProposalAnalysis}
+                    analysisCancelling={item.tipoSaida === 'oportunidade' && analysisCancellingKeys.has(getProposalKey(item) ?? '')}
                     analysisStarting={item.tipoSaida === 'oportunidade' && analysisStartingKeys.has(getProposalKey(item) ?? '')}
                     analysisJob={item.tipoSaida === 'oportunidade'
                       ? analysisJobs.find(job => job.proposalKey === getProposalKey(item))

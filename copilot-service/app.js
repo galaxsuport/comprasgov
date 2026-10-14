@@ -20,7 +20,7 @@ async function readBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-export function createExtractorTools({ baseUrl, apiKey, jobId, fetchImpl = fetch }) {
+export function createExtractorTools({ baseUrl, apiKey, jobId, fetchImpl = fetch, signal }) {
   if (!ID.test(jobId)) throw new Error('job_id inválido.');
   const base = new URL(baseUrl);
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
@@ -32,7 +32,7 @@ export function createExtractorTools({ baseUrl, apiKey, jobId, fetchImpl = fetch
       ...init,
       headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       redirect: 'error',
-      signal: AbortSignal.timeout(330000)
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(330000)]) : AbortSignal.timeout(330000)
     });
     if (!response.ok) throw new Error(`Ferramenta do extrator respondeu HTTP ${response.status}.`);
     return response.json();
@@ -77,11 +77,18 @@ export function createExtractorTools({ baseUrl, apiKey, jobId, fetchImpl = fetch
   ];
 }
 
-export function createCopilotServer({ client, apiKey, model, extractorUrl, extractorApiKey, timeoutMs = 900000 }) {
+export function createCopilotServer({ client, apiKey, model, extractorUrl, extractorApiKey, timeoutMs = 900000, fetchImpl = fetch }) {
   if (!apiKey || apiKey.length < 32) throw new Error('COPILOT_SERVICE_KEY deve ter pelo menos 32 caracteres.');
   if (!model || !extractorUrl || !extractorApiKey) throw new Error('Modelo e integração do extrator são obrigatórios.');
   const keyHash = createHash('sha256').update(apiKey).digest();
-  let active = false;
+  let active = null;
+  async function extractor(jobId, method) {
+    const result = await fetchImpl(new URL(`/jobs/${jobId}`, extractorUrl), {
+      method, headers: { 'X-API-Key': extractorApiKey }, redirect: 'error', signal: AbortSignal.timeout(30000)
+    });
+    if (!result.ok) throw new Error(`Extrator respondeu HTTP ${result.status}; operação não confirmada.`);
+    return result.json();
+  }
   return createServer(async (request, response) => {
     const provided = request.headers['x-api-key'];
     if (typeof provided !== 'string' || !timingSafeEqual(keyHash, createHash('sha256').update(provided).digest())) {
@@ -95,6 +102,35 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
       } catch (error) {
         console.error('Falha ao verificar autenticação Copilot:', error.message);
         send(response, 503, { ok: false, error: 'Não foi possível verificar a autenticação Copilot.' });
+      }
+      return;
+    }
+    const cancellation = request.url.match(/^\/jobs\/([a-f0-9]{32})\/cancel$/);
+    if (request.method === 'POST' && cancellation) {
+      try {
+        const jobId = cancellation[1];
+        const deleted = await extractor(jobId, 'DELETE');
+        if (deleted.cancelled !== true || deleted.job_id !== jobId) throw new Error('Extrator não confirmou a remoção do job.');
+        const current = active?.jobId === jobId ? active : null;
+        if (current) {
+          current.controller.abort(new Error('Análise cancelada pelo usuário.'));
+          let timer;
+          try {
+            await Promise.race([
+              current.finished,
+              new Promise((resolve, reject) => {
+                timer = setTimeout(() => reject(new Error('Copilot não confirmou a interrupção em 30 segundos.')), 30000);
+              })
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+          if (current.cleanupError) throw current.cleanupError;
+        }
+        send(response, 200, { job_id: jobId, cancelled: true });
+      } catch (error) {
+        console.error('Falha ao cancelar análise:', error.message);
+        send(response, 502, { error: error.message });
       }
       return;
     }
@@ -121,12 +157,22 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
       send(response, 429, { error: 'Uma análise está em andamento.' });
       return;
     }
-    active = true;
+    let finish;
+    const current = {
+      jobId: body.job_id, controller: new AbortController(),
+      finished: new Promise(resolve => { finish = resolve; }), session: null, cleanupError: null
+    };
+    active = current;
+    const { signal } = current.controller;
     let session;
     try {
+      await extractor(body.job_id, 'GET');
+      signal.throwIfAborted();
       if (!(await client.getAuthStatus()).isAuthenticated) throw new Error('Copilot não autenticado. Conclua o login oficial.');
+      signal.throwIfAborted();
       if (!(await client.listModels()).some(item => item.id === model)) throw new Error(`Modelo ${model} indisponível para esta conta.`);
-      const tools = createExtractorTools({ baseUrl: extractorUrl, apiKey: extractorApiKey, jobId: body.job_id });
+      signal.throwIfAborted();
+      const tools = createExtractorTools({ baseUrl: extractorUrl, apiKey: extractorApiKey, jobId: body.job_id, fetchImpl, signal });
       session = await client.createSession({
         model,
         tools,
@@ -138,21 +184,39 @@ export function createCopilotServer({ client, apiKey, model, extractorUrl, extra
         systemMessage: { mode: 'replace', content: body.systemMessage },
         streaming: true
       });
-      const result = await session.sendAndWait({ prompt: body.prompt }, timeoutMs);
+      current.session = session;
+      signal.throwIfAborted();
+      let rejectCancelled;
+      const cancelled = new Promise((resolve, reject) => { rejectCancelled = () => reject(signal.reason); });
+      signal.addEventListener('abort', rejectCancelled, { once: true });
+      let result;
+      try {
+        result = await Promise.race([session.sendAndWait({ prompt: body.prompt }, timeoutMs), cancelled]);
+      } finally {
+        signal.removeEventListener('abort', rejectCancelled);
+      }
+      signal.throwIfAborted();
       const output = result?.data?.content;
       if (typeof output !== 'string' || !output.trim()) throw new Error('Copilot retornou um relatório vazio.');
       send(response, 200, { job_id: body.job_id, model, output });
     } catch (error) {
       console.error(`Análise Copilot ${body.job_id} falhou:`, error.message);
       if (session) {
-        try { await session.abort(); } catch (abortError) { console.error('Falha ao cancelar a sessão:', abortError.message); }
+        try { await session.abort(); } catch (abortError) {
+          current.cleanupError = abortError;
+          console.error('Falha ao cancelar a sessão:', abortError.message);
+        }
       }
       send(response, 502, { error: error.message, job_id: body.job_id });
     } finally {
       if (session) {
-        try { await session.disconnect(); } catch (error) { console.error('Falha ao encerrar a sessão:', error.message); }
+        try { await session.disconnect(); } catch (error) {
+          current.cleanupError = error;
+          console.error('Falha ao encerrar a sessão:', error.message);
+        }
       }
-      active = false;
+      active = null;
+      finish();
     }
   });
 }

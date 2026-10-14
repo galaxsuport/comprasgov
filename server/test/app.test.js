@@ -441,7 +441,7 @@ test('preserves analysis data across initialization without affecting proposals 
     )
   `);
   legacyDb.prepare('INSERT INTO analysis_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(username, 'legacy-job', 'id:123', JSON.stringify(proposal), 'concluido', 'done',
+    .run(username, 'legacy-job', 'id:123', JSON.stringify(proposal), 'concluido', 'x'.repeat(300),
       '/consult', '/report', '<h1>Legacy report</h1>', 1, 2, 1, 2);
   for (const table of ['registered_proposals', 'discarded_proposals']) {
     legacyDb.prepare(`INSERT INTO ${table} VALUES (?, ?, ?, ?)`)
@@ -463,6 +463,8 @@ test('preserves analysis data across initialization without affecting proposals 
     const jobs = await (await fetch(`${url}/api/analysis`, { headers })).json();
     assert.equal(jobs[0].jobId, 'legacy-job');
     assert.equal(jobs[0].hasReport, true);
+    assert.equal(jobs[0].message, 'x'.repeat(255));
+    assert.equal(legacyDb.prepare('SELECT message FROM analysis_jobs').get().message, 'x'.repeat(255));
     const report = await fetch(`${url}/api/analysis/legacy-job/report`, { headers });
     assert.equal(report.status, 200);
     assert.match(await report.text(), /Legacy report/);

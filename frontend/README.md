@@ -32,7 +32,7 @@ npm run dev
 
 ## Configurar endpoint
 
-Para homologação local, configure `VITE_API_BASE_URL` em `.env.homolog.local`. No EasyPanel, configure `VITE_API_BASE_URL`, `AUTH_USERNAME` e `AUTH_PASSWORD` como variáveis do serviço.
+Na execução local padrão, a API lê `VITE_API_BASE_URL` de `frontend/.env`; arquivos de modo do Vite, como `.env.homolog.local`, não alteram o ambiente da API. No EasyPanel, configure `VITE_API_BASE_URL`, `AUTH_USERNAME` e `AUTH_PASSWORD` como variáveis do serviço.
 
 O container agora executa a API e serve a interface. Monte um volume persistente no caminho `/data` para que as configurações, propostas agendadas e propostas descartadas do banco SQLite sobrevivam a reinícios e atualizações.
 
@@ -48,8 +48,22 @@ Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de logi
 
 ### Análise no card do edital
 
-O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n/Copilot e fica desabilitado como **Analisando**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
+O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n/Copilot e passa a oferecer **Cancelar análise**, inclusive enquanto o protocolo está sendo criado. Durante o cancelamento, fica desabilitado como **Cancelando...**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
 
-A tabela `analysis_jobs` guarda os jobs e relatórios por conta, permitindo retomar o acompanhamento após recarregar a página. Os cards exibem job_id, tempo, status e mensagem; o acompanhamento consulta o serviço a cada 2 segundos. `pronto_para_agente` permanece intermediário. Falhas de comunicação são exibidas e não são tratadas como conclusão.
+O webhook irmão `pncp-cancelar` recebe `{ "job_id" }` com a mesma autenticação e aciona `POST /jobs/{job_id}/cancel` do serviço Copilot. Esse coordenador remove os dados do extrator e aborta a sessão SDK; o fluxo n8n deixa de continuar quando o protocolo é removido. Somente após confirmação externa a API exclui todos os jobs/relatórios da proposta e o card volta a **Analisar**. Se o cancelamento falhar, os registros locais permanecem e o erro é exibido. Consumo já realizado em provedores externos não é estornado.
+
+A tabela `analysis_jobs` guarda os jobs e relatórios por conta, permitindo retomar o acompanhamento após recarregar a página. Os cards exibem job_id, status e mensagem de progresso limitada a 255 caracteres na interface, API e banco. Mensagens antigas maiores são truncadas na inicialização da API. O tempo de análise aparece somente ao finalizar, com duração fixa; o acompanhamento consulta o serviço a cada 2 segundos. `pronto_para_agente` permanece intermediário. Falhas de comunicação são exibidas e não são tratadas como conclusão.
 
 Ao terminar, o card oferece **Refazer análise** e, quando disponível, **Resultado**. A nova análise substitui o registro e relatório anteriores depois que o serviço confirma o início; se a chamada falhar, o resultado anterior é preservado. O HTML externo é servido com sandbox sem scripts. Não há lista de análises nem card de análises no painel de controle. Dados excluídos pela remoção anterior não são recuperados.
+
+### Diagnóstico de comunicação
+
+HTTP 502 indica falha entre a API/proxy e um serviço externo, não necessariamente falha do edital. A interface preserva as mensagens JSON de erro do servidor/n8n e identifica respostas HTML de gateway. Erros de conexão incluem o código de rede; timeouts da API retornam HTTP 504.
+
+O início de análise aguarda até 90 segundos; consultas de status/relatório, 30 segundos. A pesquisa usa limite de 145 segundos na API e 150 segundos no navegador. Não há repetição automática de POST de análise: em caso de timeout, verifique a execução no n8n antes de reenviar, para evitar jobs duplicados e consumo adicional do Copilot. Um erro `Task execution timed out after 60 seconds` em um nó Code deve ser investigado no executor de tarefas do n8n; aumentar o timeout da interface não corrige esse executor.
+
+O Dockerfile da raiz usa Node para servir a API e a interface; configurações Nginx antigas não fazem parte dessa implantação. Todas as cinco tabelas atuais são usadas: `credentials`, `settings`, `discarded_proposals`, `registered_proposals` e `analysis_jobs`. Contas diferentes e jobs sem proposta agendada não são, por si só, registros órfãos.
+
+### Validação
+
+Execute `npm test` nas pastas `frontend`, `server` e `copilot-service`, e `npm run build` em `frontend`. Os testes usam serviços simulados e não consomem a franquia Copilot.

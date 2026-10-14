@@ -50,7 +50,8 @@ test('authenticates requests, disables built-in tools and returns real nonempty 
     }
   };
   const server = createCopilotServer({
-    client, apiKey, model: 'gpt-5.4', extractorUrl: 'http://extractor:8080', extractorApiKey: 'key'
+    client, apiKey, model: 'gpt-5.4', extractorUrl: 'http://extractor:8080', extractorApiKey: 'key',
+    fetchImpl: async () => Response.json({ status: 'pronto_para_agente' })
   });
 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -96,7 +97,8 @@ test('rejects concurrent analyses and releases the slot after SDK failure', asyn
     })
   };
   const server = createCopilotServer({
-    client, apiKey, model: 'gpt-5.4', extractorUrl: 'http://extractor:8080', extractorApiKey: 'key'
+    client, apiKey, model: 'gpt-5.4', extractorUrl: 'http://extractor:8080', extractorApiKey: 'key',
+    fetchImpl: async () => Response.json({ status: 'pronto_para_agente' })
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}`;

@@ -8,6 +8,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
   DEFAULT_CONTEXTUAL_TERMS,
   DEFAULT_EXCLUSION_TERMS,
@@ -115,6 +116,32 @@ function jsonResponse(response, status, body, headers = {}) {
     ...headers
   });
   response.end(JSON.stringify(body));
+}
+
+function upstreamError(service, error) {
+  if (error.name === 'TimeoutError') {
+    return Object.assign(new Error(`Tempo limite excedido ao acessar ${service}. Verifique a execução no n8n antes de tentar novamente.`), { statusCode: 504 });
+  }
+  if (error.cause?.code) {
+    return Object.assign(new Error(`Não foi possível conectar a ${service} (${error.cause.code}).`), { statusCode: 502 });
+  }
+  return error;
+}
+
+async function requireUpstreamSuccess(response, service) {
+  if (response.ok) return;
+  let detail = '';
+  const text = await response.text();
+  try {
+    const body = JSON.parse(text);
+    const value = body?.message ?? body?.error;
+    if (typeof value === 'string') detail = value.slice(0, 300);
+  } catch {
+    // Proxy HTML is not suitable for display as an application error.
+  }
+  throw Object.assign(new Error(`${service} respondeu HTTP ${response.status}.${detail ? ` ${detail}` : ''}`), {
+    statusCode: response.status === 504 ? 504 : 502
+  });
 }
 
 function parseCookies(header = '') {
@@ -243,6 +270,9 @@ export function createApiServer({
   webhookUrl,
   analysisWebhookUrl,
   analysisWorkflowKey,
+  upstreamTimeoutMs = 145000,
+  analysisTimeoutMs = 30000,
+  analysisStartTimeoutMs = 90000,
   authDisabled = false,
   defaultDeadlineDays = DEFAULT_DEADLINE_DAYS,
   secureCookies = process.env.NODE_ENV === 'production'
@@ -388,7 +418,8 @@ export function createApiServer({
     'DELETE FROM registered_proposals WHERE owner = ? AND proposal_key = ?'
   );
   const cookieOptions = `Path=/; HttpOnly; SameSite=Strict${secureCookies ? '; Secure' : ''}`;
-  const startingAnalyses = new Set();
+  const startingAnalyses = new Map();
+  const cancellingAnalyses = new Set();
   const analysisOrigin = analysisWebhookUrl ? new URL(analysisWebhookUrl).origin : null;
   const analysisId = /^[A-Za-z0-9_-]{1,100}$/;
   const analysisKind = status => {
@@ -398,8 +429,9 @@ export function createApiServer({
   };
   const terminalAnalysis = row => analysisKind(row.status) === 'failed'
     || (analysisKind(row.status) === 'done' && Boolean(row.report_html));
+  db.prepare('UPDATE analysis_jobs SET message = substr(message, 1, 255) WHERE length(message) > 255').run();
   const serializeAnalysis = row => ({
-    jobId: row.job_id, proposalKey: row.proposal_key, status: row.status, message: row.message,
+    jobId: row.job_id, proposalKey: row.proposal_key, status: row.status, message: row.message?.slice(0, 255) ?? null,
     startedAt: row.started_at ?? row.created_at,
     completedAt: analysisKind(row.status) === 'running' ? null : row.completed_at,
     hasReport: analysisKind(row.status) !== 'running' && Boolean(row.report_html)
@@ -407,6 +439,20 @@ export function createApiServer({
   const getAnalysis = db.prepare('SELECT * FROM analysis_jobs WHERE owner = ? AND job_id = ?');
   const listAnalyses = db.prepare('SELECT * FROM analysis_jobs WHERE owner = ? ORDER BY created_at DESC');
   const getProposalAnalysis = db.prepare('SELECT * FROM analysis_jobs WHERE owner = ? AND proposal_key = ? ORDER BY created_at DESC LIMIT 1');
+  const cancelUrl = analysisWebhookUrl ? new URL('pncp-cancelar', analysisWebhookUrl).href : null;
+  async function cancelProposalAnalyses(owner, key) {
+    const rows = db.prepare('SELECT job_id FROM analysis_jobs WHERE owner=? AND proposal_key=?').all(owner, key);
+    for (const row of rows) {
+      const result = analysisObject(await callAnalysis(cancelUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: row.job_id })
+      }));
+      if (result.cancelled !== true || result.job_id !== row.job_id) {
+        throw new Error('O serviço externo não confirmou o cancelamento da análise.');
+      }
+    }
+    db.prepare('DELETE FROM analysis_jobs WHERE owner=? AND proposal_key=?').run(owner, key);
+  }
   function analysisUrl(path) {
     const value = typeof path === 'string' ? path.replace(/^\s*(GET|POST)\s+/i, '').trim() : '';
     if (!value || !analysisOrigin) throw new Error('Endereço de análise inválido.');
@@ -415,18 +461,27 @@ export function createApiServer({
     return url.href;
   }
   async function callAnalysis(url, init = {}) {
-    const result = await fetch(url, {
-      ...init, headers: { 'X-Workflow-Key': analysisWorkflowKey ?? '', ...init.headers },
-      redirect: 'error', signal: AbortSignal.timeout(30000)
-    });
-    const text = await result.text();
-    if (!result.ok) throw new Error(`O serviço de análise respondeu HTTP ${result.status}.`);
-    return text;
+    try {
+      const result = await fetch(url, {
+        ...init, headers: { 'X-Workflow-Key': analysisWorkflowKey ?? '', ...init.headers },
+        redirect: 'error',
+        signal: AbortSignal.timeout(init.method === 'POST' ? analysisStartTimeoutMs : analysisTimeoutMs)
+      });
+      await requireUpstreamSuccess(result, 'O serviço de análise n8n');
+      return await result.text();
+    } catch (error) {
+      throw upstreamError('o serviço de análise n8n', error);
+    }
   }
   function analysisObject(text) {
-    const parsed = JSON.parse(text);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('O serviço de análise n8n retornou JSON inválido ou vazio.');
+    }
     const value = Array.isArray(parsed) ? parsed[0] : parsed;
-    if (!value || typeof value !== 'object') throw new Error('Resposta inesperada do serviço de análise.');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Resposta inesperada do serviço de análise.');
     return value;
   }
 
@@ -776,6 +831,40 @@ export function createApiServer({
         jsonResponse(response, 200, listAnalyses.all(session.username).map(serializeAnalysis));
         return;
       }
+      if (pathname === '/api/analysis/cancel' && request.method === 'POST') {
+        const body = await readJson(request);
+        const key = body?.proposalKey;
+        if (typeof key !== 'string' || !key.trim() || key.length > 2000) {
+          jsonResponse(response, 400, { error: 'Informe a identificação da proposta.' });
+          return;
+        }
+        const lock = JSON.stringify([session.username, key]);
+        if (cancellingAnalyses.has(lock)) {
+          jsonResponse(response, 409, { error: 'O cancelamento já está em andamento.' });
+          return;
+        }
+        const pending = startingAnalyses.get(lock);
+        if (!pending && !getProposalAnalysis.get(session.username, key)) {
+          jsonResponse(response, 404, { error: 'Análise não encontrada.' });
+          return;
+        }
+        cancellingAnalyses.add(lock);
+        try {
+          if (pending) {
+            pending.cancelRequested = true;
+            const failure = await pending.finished;
+            if (failure) throw failure;
+          }
+          await cancelProposalAnalyses(session.username, key);
+          jsonResponse(response, 200, { cancelled: true });
+        } catch (error) {
+          console.error('Falha ao cancelar análise:', error);
+          jsonResponse(response, error.statusCode ?? 502, { error: error.message });
+        } finally {
+          cancellingAnalyses.delete(lock);
+        }
+        return;
+      }
       if (pathname === '/api/analysis' && request.method === 'POST') {
         const body = await readJson(request);
         const proposal = normalizeProposal(body?.proposal);
@@ -785,7 +874,7 @@ export function createApiServer({
           return;
         }
         const lock = JSON.stringify([session.username, proposal.key]);
-        if (startingAnalyses.has(lock)) {
+        if (startingAnalyses.has(lock) || cancellingAnalyses.has(lock)) {
           jsonResponse(response, 409, { error: 'A análise desta proposta está sendo iniciada.' });
           return;
         }
@@ -798,7 +887,10 @@ export function createApiServer({
           jsonResponse(response, 503, { error: 'O endpoint de análise não foi configurado no servidor.' });
           return;
         }
-        startingAnalyses.add(lock);
+        let finishStart;
+        const pending = { cancelRequested: false, finished: new Promise(resolve => { finishStart = resolve; }) };
+        startingAnalyses.set(lock, pending);
+        let failure = null;
         try {
           const startedAt = Date.now();
           const data = analysisObject(await callAnalysis(analysisWebhookUrl, {
@@ -816,15 +908,21 @@ export function createApiServer({
               (owner,job_id,proposal_key,proposal_json,status,message,consult_path,report_path,created_at,updated_at,started_at)
               VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(session.username, data.job_id, proposal.key, proposal.serialized,
               typeof data.status === 'string' && data.status.trim() ? data.status.trim().slice(0,100) : 'fila',
-              typeof data.mensagem === 'string' ? data.mensagem.slice(0,2000) : 'Análise iniciada.',
+              typeof data.mensagem === 'string' ? data.mensagem.slice(0,255) : 'Análise iniciada.',
               consult, report, startedAt, Date.now(), startedAt);
           })();
-          jsonResponse(response, 200, serializeAnalysis(getAnalysis.get(session.username, data.job_id)));
+          if (pending.cancelRequested) {
+            jsonResponse(response, 409, { error: 'Cancelamento solicitado para esta análise.' });
+          } else {
+            jsonResponse(response, 200, serializeAnalysis(getAnalysis.get(session.username, data.job_id)));
+          }
         } catch (error) {
+          failure = error;
           console.error('Falha ao iniciar análise:', error);
-          jsonResponse(response, 502, { error: error.message });
+          jsonResponse(response, error.statusCode ?? 502, { error: error.message });
         } finally {
           startingAnalyses.delete(lock);
+          finishStart(failure);
         }
         return;
       }
@@ -859,7 +957,7 @@ export function createApiServer({
               ?? (kind === 'failed' ? 'A análise falhou.' : kind === 'done' ? 'Análise concluída.' : row.message);
             const now = Date.now();
             db.prepare('UPDATE analysis_jobs SET status=?,message=?,updated_at=?,completed_at=?,report_html=? WHERE owner=? AND job_id=?')
-              .run(status, `${message ?? ''}${limitations ? ` Limitações: ${limitations}` : ''}`.slice(0,2000),
+              .run(status, `${message ?? ''}${limitations ? ` Limitações: ${limitations}` : ''}`.slice(0,255),
                 now, kind === 'running' ? null : row.completed_at ?? now,
                 kind === 'running' ? null : row.report_html, session.username, row.job_id);
             if (kind === 'done' || (kind === 'failed' && typeof data.relatorio_html === 'string' && data.relatorio_html.trim())) {
@@ -868,10 +966,15 @@ export function createApiServer({
               db.prepare('UPDATE analysis_jobs SET report_html=? WHERE owner=? AND job_id=?').run(html,session.username,row.job_id);
             }
           }
-          jsonResponse(response, 200, serializeAnalysis(getAnalysis.get(session.username, row.job_id)));
+          const updated = getAnalysis.get(session.username, row.job_id);
+          if (!updated) {
+            jsonResponse(response, 404, { error: 'A análise foi substituída por uma nova solicitação.' });
+            return;
+          }
+          jsonResponse(response, 200, serializeAnalysis(updated));
         } catch (error) {
           console.error('Falha ao consultar análise:', error);
-          jsonResponse(response, 502, { error: error.message });
+          jsonResponse(response, error.statusCode ?? 502, { error: error.message });
         }
         return;
       }
@@ -905,17 +1008,28 @@ export function createApiServer({
       try {
         const upstream = await fetch(target, {
           headers: { Accept: request.headers.accept ?? 'application/json' },
-          signal: controller.signal
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(upstreamTimeoutMs)])
         });
+        if (!upstream.ok) {
+          const contentType = upstream.headers.get('content-type') ?? '';
+          if (!contentType.includes('application/json')) {
+            await requireUpstreamSuccess(upstream, 'O serviço de pesquisa n8n');
+          }
+        }
         response.statusCode = upstream.status;
         response.setHeader('Cache-Control', 'no-store');
         response.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'application/json');
-        if (upstream.body) Readable.fromWeb(upstream.body).pipe(response);
+        if (upstream.body) await pipeline(Readable.fromWeb(upstream.body), response);
         else response.end();
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted && error.name === 'AbortError') return;
         console.error('Falha ao consultar endpoint PNCP:', error);
-        jsonResponse(response, 502, { error: 'Não foi possível consultar o endpoint PNCP.' });
+        if (response.headersSent || response.destroyed) {
+          response.destroy();
+          return;
+        }
+        const failure = upstreamError('o serviço de pesquisa n8n', error);
+        jsonResponse(response, failure.statusCode ?? 502, { error: failure.message });
       }
       return;
     }

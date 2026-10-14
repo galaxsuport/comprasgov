@@ -58,6 +58,7 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
   const [currentMonth, setCurrentMonth] = useState<Date>(initialDate);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   const todayKey = useMemo(() => {
     const today = new Date();
@@ -74,10 +75,11 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
     const key = getProposalKey(p) ?? p.numeroCompra ?? '';
     try {
       await copyText(p.cadastroProposta);
+      setCopyError(null);
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 2000);
-    } catch {
-      // Ignora erro
+    } catch (error) {
+      setCopyError(error instanceof Error ? error.message : 'Não foi possível copiar o link da proposta.');
     }
   };
 
@@ -160,6 +162,7 @@ export default function CalendarPage({ proposals, onUnregister, onBack }: Calend
 
   return (
     <section className="settings-page calendar-page">
+      {copyError ? <p className="login-error" role="alert">{copyError}</p> : null}
       <div className="calendar-header-row">
         <div>
           <h2>Propostas agendadas</h2>

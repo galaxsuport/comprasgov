@@ -15,12 +15,10 @@ interface ResultCardProps {
   isDiscarded?: boolean;
   onToggleDiscard?: (result: OportunidadeResultado) => void;
   onAnalyze?: (result: OportunidadeResultado) => void;
+  onCancelAnalysis?: (result: OportunidadeResultado) => void;
+  analysisCancelling?: boolean;
   analysisStarting?: boolean;
   analysisJob?: AnalysisJob;
-}
-
-function isOportunidade(result: PregaoResultado): result is OportunidadeResultado {
-  return result.tipoSaida === 'oportunidade';
 }
 
 function isResumo(result: PregaoResultado): result is ResumoResultado {
@@ -36,20 +34,15 @@ export default function ResultCard({
   isDiscarded = false,
   onToggleDiscard,
   onAnalyze,
+  onCancelAnalysis,
+  analysisCancelling = false,
   analysisStarting = false,
   analysisJob
 }: ResultCardProps) {
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
   const [proposalLinkError, setProposalLinkError] = useState(false);
-  const [now, setNow] = useState(Date.now);
   const analysisFinished = Boolean(analysisJob && isTerminalAnalysis(analysisJob));
-  const analysisRunning = analysisStarting || Boolean(analysisJob && !analysisFinished);
-  useEffect(() => {
-    if (!analysisRunning) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [analysisRunning, analysisJob?.jobId]);
+  const analysisRunning = analysisStarting || analysisCancelling || Boolean(analysisJob && !analysisFinished);
   useEffect(() => {
     if (!proposalLinkCopied) return;
     const timeoutId = window.setTimeout(() => setProposalLinkCopied(false), 1800);
@@ -214,9 +207,11 @@ export default function ResultCard({
           <p className="section-label">Análise do edital</p>
           <div className="card-grid card-analysis-progress">
             <div><span>job_id</span><strong>{analysisJob.jobId}</strong></div>
-            <div><span>Tempo de análise</span><strong>{formatDuration((analysisJob.completedAt ?? now) - analysisJob.startedAt)}</strong></div>
+            {analysisFinished && analysisJob.completedAt !== null ? (
+              <div><span>Tempo de análise</span><strong>{formatDuration(analysisJob.completedAt - analysisJob.startedAt)}</strong></div>
+            ) : null}
             <div aria-live="polite"><span>Status da análise</span><strong>{analysisJob.status}</strong></div>
-            <div aria-live="polite"><span>Mensagem de progresso</span><strong>{analysisJob.message ?? 'Sem mensagem de progresso'}</strong></div>
+            <div aria-live="polite"><span>Mensagem de progresso</span><strong>{analysisJob.message?.slice(0, 255) ?? 'Sem mensagem de progresso'}</strong></div>
           </div>
         </section>
       ) : null}
@@ -226,16 +221,17 @@ export default function ResultCard({
           <button
             type="button"
             className="discard-toggle"
-            onClick={() => onAnalyze(result)}
-            disabled={isDiscarded || analysisRunning || !getAnalysisParams(result)}
-            title={!getAnalysisParams(result) ? 'UASG ou número da compra indisponível'
-              : analysisRunning ? 'Análise em andamento' : analysisFinished ? 'Iniciar uma nova análise' : 'Analisar edital'}
+            onClick={() => analysisRunning ? onCancelAnalysis?.(result) : onAnalyze(result)}
+            disabled={analysisCancelling || (analysisRunning ? !onCancelAnalysis : isDiscarded || !getAnalysisParams(result))}
+            title={analysisRunning ? 'Cancelar análise e excluir os dados gerados'
+              : !getAnalysisParams(result) ? 'UASG ou número da compra indisponível'
+              : analysisFinished ? 'Iniciar uma nova análise' : 'Analisar edital'}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
               <circle cx="10.8" cy="10.8" r="6.8" />
               <path d="m16 16 5 5" />
             </svg>
-            <span>{analysisRunning ? 'Analisando' : analysisFinished ? 'Refazer análise' : 'Analisar'}</span>
+            <span>{analysisCancelling ? 'Cancelando...' : analysisRunning ? 'Cancelar análise' : analysisFinished ? 'Refazer análise' : 'Analisar'}</span>
           </button>
         ) : null}
         {analysisJob?.hasReport && !analysisStarting ? (

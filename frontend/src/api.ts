@@ -33,10 +33,14 @@ const AUTH_API_BASE_URL = '/api/auth';
 
 async function readApiError(response: Response): Promise<string> {
   try {
-    const body = await response.json() as { error?: string };
-    if (body.error) return body.error;
+    const body: unknown = await response.json();
+    if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' && body.error.trim()) return body.error;
+    if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string' && body.message.trim()) return body.message;
   } catch {
     // Non-JSON responses still report their HTTP status below.
+  }
+  if (response.status === 502 || response.status === 504) {
+    return `O servidor ou proxy não conseguiu obter resposta da API (HTTP ${response.status}). Verifique a disponibilidade da API e do n8n; em análises, confira o job antes de reenviar.`;
   }
   return `Falha na comunicação com o servidor (HTTP ${response.status}).`;
 }
@@ -177,6 +181,14 @@ export async function startAnalysis(proposal: OportunidadeResultado): Promise<An
   return response.json() as Promise<AnalysisJob>;
 }
 
+export async function cancelAnalysis(proposalKey: string): Promise<void> {
+  const response = await fetch('/api/analysis/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposalKey })
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
 export async function refreshAnalysis(jobId: string, signal?: AbortSignal): Promise<AnalysisJob> {
   const response = await fetch(`/api/analysis/${encodeURIComponent(jobId)}/refresh`, { method: 'POST', signal });
   if (!response.ok) throw new Error(await readApiError(response));
@@ -245,18 +257,15 @@ function toString(value: unknown) {
 }
 
 function extractItems(payload: unknown): Record<string, unknown>[] {
-  // Se já é array, retorna direto
+  function records(value: unknown[]): Record<string, unknown>[] {
+    if (!value.every((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))) {
+      throw new Error('O serviço de pesquisa retornou registros inválidos.');
+    }
+    return value;
+  }
+
   if (Array.isArray(payload)) {
-    return payload.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object') return [];
-      const page = entry as Record<string, unknown>;
-      if (Array.isArray(page.registros)) {
-        return page.registros.filter((item): item is Record<string, unknown> =>
-          Boolean(item && typeof item === 'object')
-        );
-      }
-      return [page];
-    });
+    return records(payload).flatMap(page => Array.isArray(page.registros) ? records(page.registros) : [page]);
   }
 
   if (payload && typeof payload === 'object') {
@@ -266,36 +275,14 @@ function extractItems(payload: unknown): Record<string, unknown>[] {
       return [obj];
     }
 
-    if (Array.isArray(obj.registros)) {
-      return obj.registros as Record<string, unknown>[];
+    for (const key of ['registros', 'body', 'resultado', 'data', 'items', 'json']) {
+      const value = obj[key];
+      if (Array.isArray(value)) return records(value);
     }
-
-    if (Array.isArray(obj.body)) {
-      return obj.body as Record<string, unknown>[];
-    }
-
-    if (Array.isArray(obj.resultado)) {
-      return obj.resultado as Record<string, unknown>[];
-    }
-
-    if (Array.isArray(obj.data)) {
-      return obj.data as Record<string, unknown>[];
-    }
-
-    if (Array.isArray(obj.items)) {
-      return obj.items as Record<string, unknown>[];
-    }
-
-    if (
-      Array.isArray((obj as any).json) &&
-      (obj as any).json.every((item: unknown) => item && typeof item === 'object')
-    ) {
-      return (obj as any).json as Record<string, unknown>[];
-    }
+    if (typeof obj.erro === 'string' || (obj.popupErro && typeof obj.popupErro === 'object')) return [];
   }
 
-  console.warn('extractItems: payload não reconhecido', payload);
-  return [];
+  throw new Error('O serviço de pesquisa retornou uma resposta inválida; não foi encontrada a lista de resultados.');
 }
 
 function extractWarning(payload: unknown, registros: Record<string, unknown>[]) {
@@ -450,17 +437,17 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
 
     // Sempre tenta ler o JSON, mesmo em respostas de erro
     let payload: unknown;
+    const text = await response.text();
     try {
-      const text = await response.text();
-      payload = text ? JSON.parse(text) : null;
+      payload = JSON.parse(text);
     } catch (parseError) {
       console.error('Erro ao ler/parsear response:', parseError);
+      if (response.ok) throw new Error('O serviço de pesquisa retornou uma resposta inválida; era esperado JSON.');
       payload = null;
     }
 
-    const registros = extractItems(payload);
-    const possuiResultados = registros.some((item) => item.tipoSaida !== 'erro');
-
+    const registros = response.ok ? extractItems(payload) : [];
+    const possuiResultados = registros.some(item => item.tipoSaida !== 'erro');
     // Tratar erro específico do webhook: limite de requisições excedido
     if (!possuiResultados && payload && typeof payload === 'object' && 'erro' in payload) {
       const erro = (payload as Record<string, unknown>).erro;
@@ -474,9 +461,10 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
     }
 
     if (!response.ok) {
+      const detail = await readApiError(new Response(JSON.stringify(payload), { status: response.status }));
       throw new WebhookPopupError(
         `Falha ao buscar resultados: ${response.status} ${response.statusText}`,
-        'O webhook não conseguiu concluir a consulta.'
+        detail
       );
     }
 
@@ -488,6 +476,7 @@ export async function fetchResultados(filters?: FetchFilters, externalSignal?: A
     return { resultados, aviso };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
+      if (externalSignal?.aborted) throw error;
       throw new Error('Tempo limite excedido (150s) ao buscar resultados');
     }
     console.error('Erro em fetchResultados:', error);

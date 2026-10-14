@@ -11,6 +11,7 @@ test('starts analyses directly, resumes progress and replaces reports only after
   let failRefresh = false;
   let emptyReport = false;
   let invalidUrl = false;
+  let message = 'Iniciada';
   const upstream = createServer(async (req, res) => {
     assert.equal(req.headers['x-workflow-key'], 'fixture-key');
     if (req.url === '/start') {
@@ -21,14 +22,14 @@ test('starts analyses directly, resumes progress and replaces reports only after
       if (failStart) { res.writeHead(503); res.end(); return; }
       starts++;
       res.end(JSON.stringify({
-        job_id: `job-${starts}`, status: 'fila', mensagem: 'Iniciada',
+        job_id: `job-${starts}`, status: 'fila', mensagem: message,
         consultar: invalidUrl ? 'https://invalid.example/status' : `GET /status?job_id=job-${starts}`,
         relatorioHtml: `GET /report?job_id=job-${starts}`
       }));
     } else if (req.url.startsWith('/status')) {
       if (failRefresh) { res.writeHead(503); res.end(); return; }
       res.end(JSON.stringify({
-        status: state, progresso: 'Dossiê pronto para o agente',
+        status: state, progresso: message === 'Iniciada' ? 'Dossiê pronto para o agente' : message,
         limitacoes: state === 'erro' ? ['Pesquisa indisponível'] : [],
         ...(state === 'erro' ? { relatorio_html: '<h1>Falha explícita</h1>' } : {})
       }));
@@ -100,11 +101,20 @@ test('starts analyses directly, resumes progress and replaces reports only after
     assert.equal((await start()).status, 502);
     assert.equal(db.prepare('SELECT job_id FROM analysis_jobs').get().job_id, initial.jobId);
     invalidUrl = false;
+    message = 'x'.repeat(300);
     const restarted = await (await start()).json();
+    assert.equal(restarted.message.length, 255);
+    assert.equal(db.prepare('SELECT length(message) AS length FROM analysis_jobs').get().length, 255);
     assert.notEqual(restarted.jobId, initial.jobId);
     assert.equal(restarted.hasReport, false);
     assert.equal(db.prepare('SELECT count(*) AS count FROM analysis_jobs').get().count, 1);
     assert.equal((await fetch(`${base}/api/analysis/${initial.jobId}/report`, { headers })).status, 404);
+    state = 'processando';
+    const longProgress = await (await refresh(restarted.jobId)).json();
+    assert.equal(longProgress.message.length, 255);
+    assert.equal(longProgress.completedAt, null);
+    assert.equal(db.prepare('SELECT length(message) AS length FROM analysis_jobs').get().length, 255);
+    message = 'Iniciada';
     state = 'erro';
     const failed = await (await refresh(restarted.jobId)).json();
     assert.equal(failed.hasReport, true);

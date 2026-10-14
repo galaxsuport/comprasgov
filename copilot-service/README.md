@@ -58,6 +58,11 @@ aguardando autenticação.
 Retorno: `{ "job_id": "...", "model": "gpt-5.4", "output": "relatório" }`.
 Configure timeout HTTP de 960000 ms; o timeout do SDK é 900000 ms.
 Uma análise por vez é permitida; concorrência retorna 429.
+Antes de iniciar uma sessão, o protocolo precisa existir no extrator.
+`POST /jobs/{job_id}/cancel`, com a mesma chave, remove os dados do extrator,
+interrompe as ferramentas e aborta/desconecta a sessão ativa antes de confirmar
+`{ "job_id": "...", "cancelled": true }`. Chamadas atrasadas não iniciam inferência
+para protocolos removidos. Requer o endpoint DELETE da versão atual do extrator.
 Falhas e respostas vazias retornam HTTP 502, não relatórios de sucesso.
 Preserve a gravação de falhas pelo fluxo e não publique a substituição do agente
 antes de verificar uma análise real.
