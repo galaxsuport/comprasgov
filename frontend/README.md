@@ -116,6 +116,14 @@ Ao terminar, o card oferece **Refazer análise** e, quando disponível, **Result
 
 HTTP 502 indica falha entre a API/proxy e um serviço externo, não necessariamente falha do edital. A interface preserva as mensagens JSON de erro do servidor/n8n e identifica respostas HTML de gateway. Erros de conexão incluem o código de rede; timeouts da API retornam HTTP 504.
 
+Se um job salvo não tiver endereço de consulta/relatório válido, seu
+acompanhamento termina com status `erro` e orientação para conferir
+`consultar` e `relatorioHtml` no retorno do n8n. O protocolo, os endereços
+originais e qualquer relatório salvo são preservados; URLs não são
+reconstruídas por suposição. Confirme o estado da execução no n8n antes
+de refazer a análise. Ausência de `ANALYSIS_WEBHOOK_URL` na API retorna
+503 com orientação de configuração, sem encerrar o job.
+
 O início de análise aguarda até 90 segundos; consultas de status/relatório, 30 segundos. A pesquisa usa limite de 145 segundos na API e 150 segundos no navegador. Não há repetição automática de POST de análise: em caso de timeout, verifique a execução no n8n antes de reenviar, para evitar jobs duplicados e consumo adicional do Copilot. Um erro `Task execution timed out after 60 seconds` em um nó Code deve ser investigado no executor de tarefas do n8n; aumentar o timeout da interface não corrige esse executor.
 
 O Dockerfile da raiz usa Node para servir a API e a interface; configurações Nginx antigas não fazem parte dessa implantação. Todas as cinco tabelas atuais são usadas: `credentials`, `settings`, `discarded_proposals`, `registered_proposals` e `analysis_jobs`. Contas diferentes e jobs sem proposta agendada não são, por si só, registros órfãos.

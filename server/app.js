@@ -542,9 +542,24 @@ export function createApiServer({
   }
   function analysisUrl(path) {
     const value = typeof path === 'string' ? path.replace(/^\s*(GET|POST)\s+/i, '').trim() : '';
-    if (!value || !analysisOrigin) throw new Error('Endereço de análise inválido.');
-    const url = new URL(value, analysisOrigin);
-    if (url.origin !== analysisOrigin || url.username || url.password) throw new Error('Endereço de análise fora do servidor configurado.');
+    if (!analysisOrigin) {
+      throw Object.assign(new Error('Configure ANALYSIS_WEBHOOK_URL no serviço da API e reinicie a aplicação para acompanhar as análises.'), {
+        statusCode: 503
+      });
+    }
+    const invalid = message => Object.assign(new Error(message), { code: 'INVALID_ANALYSIS_ADDRESS', statusCode: 502 });
+    if (!value) {
+      throw invalid('O job não possui endereço de consulta ou relatório. Verifique consultar e relatorioHtml no retorno do n8n antes de refazer a análise.');
+    }
+    let url;
+    try {
+      url = new URL(value, analysisOrigin);
+    } catch {
+      throw invalid('O endereço de consulta ou relatório do job é inválido. Corrija o retorno do n8n antes de refazer a análise.');
+    }
+    if (url.origin !== analysisOrigin || url.username || url.password) {
+      throw invalid('Endereço de análise fora do servidor configurado. Confira ANALYSIS_WEBHOOK_URL e as URLs retornadas pelo n8n.');
+    }
     return url.href;
   }
   async function callAnalysis(url, init = {}) {
@@ -1093,6 +1108,18 @@ export function createApiServer({
           jsonResponse(response, 200, serializeAnalysis(updated));
         } catch (error) {
           console.error('Falha ao consultar análise:', error);
+          if (error.code === 'INVALID_ANALYSIS_ADDRESS') {
+            const now = Date.now();
+            db.prepare(`UPDATE analysis_jobs SET status='erro',message=?,updated_at=?,completed_at=?
+              WHERE owner=? AND job_id=?`).run(error.message.slice(0,255), now, row.completed_at ?? now, session.username, row.job_id);
+            const failed = getAnalysis.get(session.username, row.job_id);
+            if (!failed) {
+              jsonResponse(response, 404, { error: 'A análise foi substituída por uma nova solicitação.' });
+              return;
+            }
+            jsonResponse(response, 200, serializeAnalysis(failed));
+            return;
+          }
           jsonResponse(response, error.statusCode ?? 502, { error: error.message });
         }
         return;
