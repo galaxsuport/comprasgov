@@ -1,13 +1,21 @@
 import { useMemo, useState } from 'react';
-import { copyText } from '../copyText';
-import { formatDateTime } from '../format';
 import type { OportunidadeResultado } from '../types';
-import { getProposalKey } from '../api';
+import { getProposalKey, type AnalysisJob } from '../api';
+import ResultCard from './ResultCard';
 
 interface CalendarPageProps {
   proposals: OportunidadeResultado[];
   onUnregister: (proposal: OportunidadeResultado) => void;
-  onViewProposal: (proposal: OportunidadeResultado) => void;
+  isUnregistering: (proposal: OportunidadeResultado) => boolean;
+  isDiscarded: (proposal: OportunidadeResultado) => boolean;
+  onToggleDiscard: (proposal: OportunidadeResultado) => void;
+  onAnalyze: (proposal: OportunidadeResultado) => void;
+  onCancelAnalysis: (proposal: OportunidadeResultado) => void;
+  isAnalysisStarting: (proposal: OportunidadeResultado) => boolean;
+  isAnalysisCancelling: (proposal: OportunidadeResultado) => boolean;
+  getAnalysisJob: (proposal: OportunidadeResultado) => AnalysisJob | undefined;
+  onStatusUpdated: (key: string, situacao: string) => void;
+  error: string | null;
   onBack: () => void;
 }
 
@@ -28,7 +36,21 @@ function getProposalDateKey(proposal: OportunidadeResultado): string | null {
   return `${year}-${month}-${day}`;
 }
 
-export default function CalendarPage({ proposals, onUnregister, onViewProposal, onBack }: CalendarPageProps) {
+export default function CalendarPage({
+  proposals,
+  onUnregister,
+  isUnregistering,
+  isDiscarded,
+  onToggleDiscard,
+  onAnalyze,
+  onCancelAnalysis,
+  isAnalysisStarting,
+  isAnalysisCancelling,
+  getAnalysisJob,
+  onStatusUpdated,
+  error,
+  onBack
+}: CalendarPageProps) {
   const today = new Date();
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const upcomingProposals = useMemo(() => proposals.filter(proposal => {
@@ -63,29 +85,32 @@ export default function CalendarPage({ proposals, onUnregister, onViewProposal, 
 
   const [currentMonth, setCurrentMonth] = useState<Date>(initialDate);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [copyError, setCopyError] = useState<string | null>(null);
 
   const goToToday = () => {
     const today = new Date();
     setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
   };
 
-  const copyProposalLink = async (p: OportunidadeResultado) => {
-    if (!p.cadastroProposta) return;
-    const key = getProposalKey(p) ?? p.numeroCompra ?? '';
-    try {
-      await copyText(p.cadastroProposta);
-      setCopyError(null);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 2000);
-    } catch (error) {
-      setCopyError(error instanceof Error ? error.message : 'Não foi possível copiar o link da proposta.');
-    }
-  };
-
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
+
+  const renderProposalCard = (proposal: OportunidadeResultado, index: number) => (
+    <ResultCard
+      key={getProposalKey(proposal) ?? proposal.idContratacaoPNCP ?? `${proposal.numeroCompra ?? 'proposta'}-${index}`}
+      result={proposal}
+      isRegistering={isUnregistering(proposal)}
+      isDiscarded={isDiscarded(proposal)}
+      isRegistered
+      onToggleRegister={onUnregister}
+      onToggleDiscard={onToggleDiscard}
+      onAnalyze={onAnalyze}
+      onCancelAnalysis={onCancelAnalysis}
+      analysisStarting={isAnalysisStarting(proposal)}
+      analysisCancelling={isAnalysisCancelling(proposal)}
+      analysisJob={getAnalysisJob(proposal)}
+      onStatusUpdated={onStatusUpdated}
+    />
+  );
 
   const prevMonth = () => {
     setCurrentMonth(new Date(year, month - 1, 1));
@@ -163,7 +188,7 @@ export default function CalendarPage({ proposals, onUnregister, onViewProposal, 
 
   return (
     <section className="settings-page calendar-page">
-      {copyError ? <p className="login-error" role="alert">{copyError}</p> : null}
+      {error ? <div className="status-card status-error" role="alert">{error}</div> : null}
       <div className="calendar-header-row">
         <div>
           <h2>Propostas agendadas</h2>
@@ -249,78 +274,7 @@ export default function CalendarPage({ proposals, onUnregister, onViewProposal, 
             Propostas do dia {selectedDate.split('-').reverse().join('/')} ({selectedProposals.length})
           </h3>
           <div className="calendar-proposals-list">
-            {selectedProposals.map(p => {
-              const link = p.linkContratacao ?? p.linkSistemaOrigem;
-              return (
-                <article key={getProposalKey(p) ?? p.numeroCompra ?? Math.random()} className="calendar-proposal-card">
-                  <header>
-                    <span className="calendar-proposal-status">Agendada</span>
-                    <strong>{p.unidadeCompradora ?? p.orgao ?? 'Proposta'}</strong>
-                    <span>{p.numeroCompra}</span>
-                  </header>
-                  <dl>
-                    <dt>resumo do objeto</dt>
-                    <dd className="calendar-proposal-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
-                    <dt>valor do edital</dt>
-                    <dd className="calendar-proposal-value">{p.valor ?? '—'}</dd>
-                    <dt>abertura da sessão</dt>
-                    <dd>{formatDateTime(p.dataEncerramentoProposta)}</dd>
-                    <dt>local</dt>
-                    <dd>{p.local ?? '—'}</dd>
-                  </dl>
-                  <div className="card-discard-row">
-                    <button type="button" className="discard-toggle" onClick={() => onViewProposal(p)}>
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                      <span>Visualizar edital</span>
-                    </button>
-                    {link ? (
-                      <a
-                        className="discard-toggle pncp-link"
-                        href={link}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={p.linkContratacao ? 'Ver no PNCP' : 'Ver proposta'}
-                      >
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <path d="M15 3h6v6" />
-                          <path d="M10 14L21 3" />
-                        </svg>
-                        <span>{p.linkContratacao ? 'Ver no PNCP' : 'Ver proposta'}</span>
-                      </a>
-                    ) : null}
-                    {p.cadastroProposta ? (
-                      <button
-                        type="button"
-                        className="discard-toggle action-link"
-                        onClick={() => void copyProposalLink(p)}
-                        aria-label={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                        title={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                      >
-                        {copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="discard-toggle"
-                      onClick={() => onUnregister(p)}
-                      title="Remover das propostas agendadas"
-                    >
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M3 6h18" />
-                        <path d="M8 6V4h8v2" />
-                        <path d="M19 6l-1 14H6L5 6" />
-                        <path d="M10 11v6M14 11v6" />
-                      </svg>
-                      <span>Desagendar proposta</span>
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+            {selectedProposals.map(renderProposalCard)}
           </div>
         </div>
       ) : null}
@@ -331,78 +285,7 @@ export default function CalendarPage({ proposals, onUnregister, onViewProposal, 
           <div className="status-card">Nenhuma proposta agendada para hoje ou datas futuras.</div>
         ) : (
           <div className="calendar-proposal-list">
-            {upcomingProposals.map(p => {
-              const link = p.linkContratacao ?? p.linkSistemaOrigem;
-              return (
-                <article key={getProposalKey(p) ?? p.numeroCompra ?? Math.random()} className="calendar-proposal-card">
-                  <header>
-                    <span className="calendar-proposal-status">Agendada</span>
-                    <strong>{p.unidadeCompradora ?? p.orgao ?? 'Proposta'}</strong>
-                    <span>{p.numeroCompra}</span>
-                  </header>
-                  <dl>
-                    <dt>resumo do objeto</dt>
-                    <dd className="calendar-proposal-object" title={p.objeto ?? undefined}>{p.objeto ?? '—'}</dd>
-                    <dt>valor do edital</dt>
-                    <dd className="calendar-proposal-value">{p.valor ?? '—'}</dd>
-                    <dt>abertura da sessão</dt>
-                    <dd>{formatDateTime(p.dataEncerramentoProposta)}</dd>
-                    <dt>local</dt>
-                    <dd>{p.local ?? '—'}</dd>
-                  </dl>
-                  <div className="card-discard-row">
-                    <button type="button" className="discard-toggle" onClick={() => onViewProposal(p)}>
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                      <span>Visualizar edital</span>
-                    </button>
-                    {link ? (
-                      <a
-                        className="discard-toggle pncp-link"
-                        href={link}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={p.linkContratacao ? 'Ver no PNCP' : 'Ver proposta'}
-                      >
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <path d="M15 3h6v6" />
-                          <path d="M10 14L21 3" />
-                        </svg>
-                        <span>{p.linkContratacao ? 'Ver no PNCP' : 'Ver proposta'}</span>
-                      </a>
-                    ) : null}
-                    {p.cadastroProposta ? (
-                      <button
-                        type="button"
-                        className="discard-toggle action-link"
-                        onClick={() => void copyProposalLink(p)}
-                        aria-label={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                        title={copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Link copiado' : 'Copiar link da proposta'}
-                      >
-                        {copiedKey === (getProposalKey(p) ?? p.numeroCompra) ? 'Copiado' : 'Link da proposta'}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="discard-toggle"
-                      onClick={() => onUnregister(p)}
-                      title="Remover das propostas agendadas"
-                    >
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M3 6h18" />
-                        <path d="M8 6V4h8v2" />
-                        <path d="M19 6l-1 14H6L5 6" />
-                        <path d="M10 11v6M14 11v6" />
-                      </svg>
-                      <span>Desagendar proposta</span>
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+            {upcomingProposals.map(renderProposalCard)}
           </div>
         )}
       </div>

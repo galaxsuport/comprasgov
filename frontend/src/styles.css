@@ -1432,61 +1432,6 @@ body {
   margin: 1rem 0;
 }
 
-.calendar-proposal-card {
-  display: grid;
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.5);
-}
-
-.calendar-proposal-card header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.calendar-proposal-card dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-  margin: 0;
-}
-
-.calendar-proposal-card dt {
-  color: #94a3b8;
-}
-
-.calendar-proposal-card dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.calendar-proposal-value {
-  color: #166534;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-
-.calendar-proposal-object {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.calendar-proposal-status {
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  background: rgba(52, 211, 153, 0.18);
-  color: #34d399;
-}
-
 .calendar-page {
   width: 100%;
 }

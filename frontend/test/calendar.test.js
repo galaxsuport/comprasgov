@@ -23,6 +23,25 @@ let source = transpile('../src/components/CalendarPage.tsx');
 for (const name of ['copyText', 'format', 'api']) {
   source = source.replace(`'../${name}'`, JSON.stringify(moduleUrl(transpile(`../src/${name}.ts`))));
 }
+let resultCardSource = transpile('../src/components/ResultCard.tsx');
+for (const name of ['copyText', 'format', 'api', 'analysisStatus']) {
+  resultCardSource = resultCardSource.replace(`'../${name}'`, JSON.stringify(moduleUrl(transpile(`../src/${name}.ts`))));
+}
+let timeRemainingSource = transpile('../src/components/TimeRemaining.tsx');
+timeRemainingSource = timeRemainingSource.replace(
+  "'../format'",
+  JSON.stringify(moduleUrl(transpile('../src/format.ts')))
+);
+for (const name of ['react/jsx-runtime', 'react']) {
+  timeRemainingSource = timeRemainingSource.replaceAll(`"${name}"`, JSON.stringify(import.meta.resolve(name)))
+    .replaceAll(`'${name}'`, JSON.stringify(import.meta.resolve(name)));
+}
+resultCardSource = resultCardSource.replace("'./TimeRemaining'", JSON.stringify(moduleUrl(timeRemainingSource)));
+for (const name of ['react/jsx-runtime', 'react']) {
+  resultCardSource = resultCardSource.replaceAll(`"${name}"`, JSON.stringify(import.meta.resolve(name)))
+    .replaceAll(`'${name}'`, JSON.stringify(import.meta.resolve(name)));
+}
+source = source.replace("'./ResultCard'", JSON.stringify(moduleUrl(resultCardSource)));
 for (const name of ['react/jsx-runtime', 'react']) {
   source = source.replaceAll(`"${name}"`, JSON.stringify(import.meta.resolve(name)))
     .replaceAll(`'${name}'`, JSON.stringify(import.meta.resolve(name)));
@@ -31,7 +50,11 @@ const { default: CalendarPage } = await import(moduleUrl(source));
 
 function render(proposals) {
   return renderToStaticMarkup(createElement(CalendarPage, {
-    proposals, onUnregister() {}, onViewProposal() {}, onBack() {}
+    proposals, onUnregister() {}, isUnregistering() { return false; },
+    isDiscarded() { return false; }, onToggleDiscard() {}, onAnalyze() {},
+    onCancelAnalysis() {}, isAnalysisStarting() { return false; },
+    isAnalysisCancelling() { return false; }, getAnalysisJob() {},
+    onStatusUpdated() {}, error: null, onBack() {}
   }));
 }
 
@@ -57,7 +80,11 @@ test('calendar filters grid, counts and list by local day, retaining all of toda
     assert.ok(!html.includes(text), text);
   }
   assert.equal((html.match(/class="day-badge"/g) ?? []).length, 3);
-  assert.equal((html.match(/Visualizar edital/g) ?? []).length, 4);
+  assert.equal((html.match(/>Analisar<\/span>/g) ?? []).length, 4);
+  assert.equal((html.match(/>Agendada<\/span>/g) ?? []).length, 4);
+  assert.equal((html.match(/>Descartar<\/span>/g) ?? []).length, 4);
+  assert.doesNotMatch(html, /Visualizar edital/);
+  assert.equal((html.match(/class="card"/g) ?? []).length, 4);
   assert.equal(proposals.length, 8);
 
   t.mock.timers.setTime(new Date(2026, 9, 15, 0, 1).getTime());

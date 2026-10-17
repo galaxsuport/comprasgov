@@ -957,15 +957,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     if (discardConfirmation) discardDialogRef.current?.showModal();
   }, [discardConfirmation]);
   const [showCalendar, setShowCalendar] = useState(false);
-  const [selectedProposal, setSelectedProposal] = useState<OportunidadeResultado | null>(null);
-  const proposalCardsRef = useRef<HTMLElement>(null);
   const [proposalOperations, setProposalOperations] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  useEffect(() => {
-    if (selectedProposal && !showCalendar && !settingsOpen) {
-      proposalCardsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [selectedProposal, showCalendar, settingsOpen]);
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
   const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
   const analysisStartingRef = useRef(new Set<string>());
@@ -1088,7 +1081,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     async function load() {
       try {
         setLoading(true);
-        setSelectedProposal(null);
         setResultados([]);
         setError(null);
         setPopupError(null);
@@ -1291,7 +1283,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     }
   };
 
-  const baseResults = showDiscarded ? discarded : selectedProposal ? [selectedProposal] : orderedResults;
+  const baseResults = showDiscarded ? discarded : orderedResults;
   const summaryResults = showDiscarded
     ? baseResults
     : baseResults.filter(item => item.tipoSaida !== 'oportunidade' || !discardedKeys.has(getProposalKey(item) ?? ''));
@@ -1346,7 +1338,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             setShowDiscarded(false);
             setSettingsOpen(false);
             setSummaryFilter(null);
-            setSelectedProposal(null);
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           settingsOpen={settingsOpen}
@@ -1361,14 +1352,17 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
         {showCalendar && !settingsOpen ? (
           <CalendarPage
             proposals={registered}
-            onUnregister={toggleRegisterProposal}
-            onViewProposal={proposal => {
-              setSelectedProposal(proposal);
-              setShowCalendar(false);
-              setShowDiscarded(false);
-              setSettingsOpen(false);
-              setSummaryFilter(null);
-            }}
+            onUnregister={handleToggleRegisterProposal}
+            isUnregistering={proposal => proposalOperations.has(getProposalKey(proposal) ?? '')}
+            isDiscarded={proposal => discardedKeys.has(getProposalKey(proposal) ?? '')}
+            onToggleDiscard={toggleDiscard}
+            onAnalyze={analyzeProposal}
+            onCancelAnalysis={cancelProposalAnalysis}
+            isAnalysisStarting={proposal => analysisStartingKeys.has(getProposalKey(proposal) ?? '')}
+            isAnalysisCancelling={proposal => analysisCancellingKeys.has(getProposalKey(proposal) ?? '')}
+            getAnalysisJob={proposal => analysisJobs.find(job => job.proposalKey === getProposalKey(proposal))}
+            onStatusUpdated={handleStatusUpdated}
+            error={appError ?? analysisError}
             onBack={() => setShowCalendar(false)}
           />
         ) : settingsOpen ? (
@@ -1406,7 +1400,6 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             discarded={discarded}
             activeFilter={summaryFilter}
             onSelectFilter={filter => {
-              setSelectedProposal(null);
               handleSummaryFilterChange(filter);
             }}
             onOpenCalendar={() => {
@@ -1434,14 +1427,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
               />
             ) : null}
             {visibleResults.length > 0 ? (
-              <section className="cards-shell" ref={proposalCardsRef}>
-                {selectedProposal && !showDiscarded ? (
-                  <button type="button" className="logout-button logout-icon" onClick={() => setSelectedProposal(null)} aria-label="Voltar aos resultados da pesquisa" title="Voltar aos resultados da pesquisa">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="m12 19-7-7 7-7M5 12h14" />
-                    </svg>
-                  </button>
-                ) : null}
+              <section className="cards-shell">
                 {visibleResults.map((item, index) => (
                   <ResultCard
                     key={item.tipoSaida === 'oportunidade'

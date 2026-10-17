@@ -53,7 +53,9 @@ Essa limpeza não remove agendamentos nem análises.
 
 O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais e a lista seguem esse filtro. A data considerada continua sendo o encerramento da proposta, com abertura e publicação como alternativas. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário.
 
-O botão **Visualizar edital** nos cards do calendário abre a proposta salva no card principal, com suas ações e análise, mesmo sem resultados de pesquisa carregados. A pesquisa anterior é preservada e pode ser retomada por **Voltar aos resultados da pesquisa**.
+As propostas no calendário e na lista de agendamentos usam o mesmo card de resultado da pesquisa, com os dados e ações disponíveis para a proposta.
+
+Os cards do calendário também permitem iniciar ou cancelar análises, consultar relatórios e usar as demais ações do card de pesquisa.
 
 ## Instalação
 
