@@ -20,7 +20,7 @@ function moduleUrl(source) {
 }
 
 let source = transpile('../src/components/CalendarPage.tsx');
-for (const name of ['copyText', 'format', 'api']) {
+for (const name of ['copyText', 'format', 'api', 'scheduledProposals']) {
   source = source.replace(`'../${name}'`, JSON.stringify(moduleUrl(transpile(`../src/${name}.ts`))));
 }
 let resultCardSource = transpile('../src/components/ResultCard.tsx');

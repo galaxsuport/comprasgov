@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { OportunidadeResultado } from '../types';
 import { getProposalKey, type AnalysisJob } from '../api';
 import ResultCard from './ResultCard';
+import { getLocalDateKey, getProposalDateKey, getUpcomingProposals } from '../scheduledProposals';
 
 interface CalendarPageProps {
   proposals: OportunidadeResultado[];
@@ -25,17 +26,6 @@ const MONTH_NAMES = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
-function getProposalDateKey(proposal: OportunidadeResultado): string | null {
-  const raw = proposal.dataEncerramentoProposta ?? proposal.dataAberturaProposta ?? proposal.dataPublicacao;
-  if (!raw) return null;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 export default function CalendarPage({
   proposals,
   onUnregister,
@@ -52,11 +42,11 @@ export default function CalendarPage({
   onBack
 }: CalendarPageProps) {
   const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const upcomingProposals = useMemo(() => proposals.filter(proposal => {
-    const dateKey = getProposalDateKey(proposal);
-    return dateKey !== null && dateKey >= todayKey;
-  }), [proposals, todayKey]);
+  const todayKey = getLocalDateKey(today);
+  const upcomingProposals = useMemo(
+    () => getUpcomingProposals(proposals, todayKey),
+    [proposals, todayKey]
+  );
 
   // Mapa de data 'YYYY-MM-DD' -> propostas
   const proposalsByDate = useMemo(() => {

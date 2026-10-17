@@ -51,7 +51,7 @@ A tela sincroniza a lista a cada minuto, ao voltar para a janela, ao abrir/fecha
 descartadas e após descartar/restaurar, atualizando também os totais do painel.
 Essa limpeza não remove agendamentos nem análises.
 
-O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais e a lista seguem esse filtro. A data considerada continua sendo o encerramento da proposta, com abertura e publicação como alternativas. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário.
+O calendário de propostas agendadas mostra somente propostas com data igual ou posterior ao dia atual, no horário local do navegador (incluindo horários já passados de hoje). A grade, os totais, a lista e o contador de propostas agendadas do painel seguem esse mesmo filtro. A data considerada é o encerramento da proposta, com abertura e publicação como alternativas quando a data anterior estiver ausente ou inválida. Propostas antigas ou sem data válida permanecem salvas, mas não aparecem no calendário nem no contador.
 
 As propostas no calendário e na lista de agendamentos usam o mesmo card de resultado da pesquisa, com os dados e ações disponíveis para a proposta.
 
@@ -101,9 +101,9 @@ Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de logi
 
 ### Análise no card do edital
 
-O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n/Copilot e passa a oferecer **Cancelar análise**, inclusive enquanto o protocolo está sendo criado. Durante o cancelamento, fica desabilitado como **Cancelando...**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
+O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n e passa a oferecer **Cancelar análise**, inclusive enquanto o protocolo está sendo criado. Durante o cancelamento, fica desabilitado como **Cancelando...**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
 
-O webhook irmão `pncp-cancelar` recebe `{ "job_id" }` com a mesma autenticação e aciona `POST /jobs/{job_id}/cancel` do serviço Copilot. Esse coordenador remove os dados do extrator e aborta a sessão SDK; o fluxo n8n deixa de continuar quando o protocolo é removido. Somente após confirmação externa a API exclui todos os jobs/relatórios da proposta e o card volta a **Analisar**. Se o cancelamento falhar, os registros locais permanecem e o erro é exibido. Consumo já realizado em provedores externos não é estornado.
+O webhook irmão `pncp-cancelar` recebe `{ "job_id" }` com a mesma autenticação e cancela o processamento externo e o job do extrator. Somente após confirmação externa a API exclui todos os jobs/relatórios da proposta e o card volta a **Analisar**. Se o cancelamento falhar, os registros locais permanecem e o erro é exibido.
 
 A tabela `analysis_jobs` guarda os jobs e relatórios por conta, permitindo retomar o acompanhamento após recarregar a página. Os cards exibem job_id, status e mensagem de progresso limitada a 255 caracteres na interface, API e banco. Mensagens antigas maiores são truncadas na inicialização da API. O tempo de análise aparece somente ao finalizar, com duração fixa; o acompanhamento consulta o serviço a cada 2 segundos. `pronto_para_agente` permanece intermediário. Falhas de comunicação são exibidas e não são tratadas como conclusão.
 
@@ -126,10 +126,10 @@ reconstruídas por suposição. Confirme o estado da execução no n8n antes
 de refazer a análise. Ausência de `ANALYSIS_WEBHOOK_URL` na API retorna
 503 com orientação de configuração, sem encerrar o job.
 
-O início de análise aguarda até 90 segundos; consultas de status/relatório, 30 segundos. A pesquisa usa limite de 145 segundos na API e 150 segundos no navegador. Não há repetição automática de POST de análise: em caso de timeout, verifique a execução no n8n antes de reenviar, para evitar jobs duplicados e consumo adicional do Copilot. Um erro `Task execution timed out after 60 seconds` em um nó Code deve ser investigado no executor de tarefas do n8n; aumentar o timeout da interface não corrige esse executor.
+O início de análise aguarda até 90 segundos; consultas de status/relatório, 30 segundos. A pesquisa usa limite de 145 segundos na API e 150 segundos no navegador. Não há repetição automática de POST de análise: em caso de timeout, verifique a execução no n8n antes de reenviar, para evitar jobs duplicados e consumo adicional em provedores externos. Um erro `Task execution timed out after 60 seconds` em um nó Code deve ser investigado no executor de tarefas do n8n; aumentar o timeout da interface não corrige esse executor.
 
 O Dockerfile da raiz usa Node para servir a API e a interface; configurações Nginx antigas não fazem parte dessa implantação. Todas as cinco tabelas atuais são usadas: `credentials`, `settings`, `discarded_proposals`, `registered_proposals` e `analysis_jobs`. Contas diferentes e jobs sem proposta agendada não são, por si só, registros órfãos.
 
 ### Validação
 
-Execute `npm test` nas pastas `frontend`, `server` e `copilot-service`, e `npm run build` em `frontend`. Os testes usam serviços simulados e não consomem a franquia Copilot.
+Execute `npm test` nas pastas `frontend` e `server`, `python -m unittest discover -p 'test_*.py'` em `extractor-service` e `npm run build` em `frontend`. Os testes usam serviços simulados.

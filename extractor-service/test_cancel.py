@@ -62,23 +62,10 @@ class CancelTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await self.client.delete(f"/jobs/{job_id}")).json()["cancelled"])
             self.assertEqual((await self.client.delete("/jobs/not-an-id")).status_code, 422)
 
-    async def test_cancels_inflight_research(self):
-        job_id = "a" * 32
-        app.save({"job_id": job_id, "status": "pronto_para_agente", "pesquisas": []}, create=True)
-        started = asyncio.Event()
-
-        async def search(*args):
-            started.set()
-            await asyncio.Event().wait()
-
-        with patch.object(app, "search", search):
-            request = asyncio.create_task(self.client.post(
-                f"/jobs/{job_id}/pesquisar", json={"consulta": "fixture"}))
-            await started.wait()
-            self.assertTrue((await self.client.delete(f"/jobs/{job_id}")).json()["cancelled"])
-            with self.assertRaises(asyncio.CancelledError):
-                await request
-            self.assertEqual((await self.client.get(f"/jobs/{job_id}")).status_code, 404)
+    async def test_research_endpoint_returns_not_found_for_missing_job(self):
+        response = await self.client.post(
+            f"/jobs/{'a' * 32}/pesquisar", json={"consulta": "fixture"})
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

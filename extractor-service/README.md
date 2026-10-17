@@ -1,47 +1,41 @@
 # Extrator PNCP
 
-Fonte importada da versão implantada, preservando coleta, OCR, pesquisas e
-modelos existentes. Build Path no EasyPanel: `/extractor-service`.
+Serviço para coleta de dados públicos do PNCP, download de documentos e
+extração de texto por OCR. Build Path no EasyPanel: `/extractor-service`.
 Mantenha as variáveis de ambiente e o volume `/data` atuais.
 
-## IA pelo GitHub Copilot
+O extrator prepara um dossiê com os dados da contratação, metadados dos
+documentos e textos extraídos. A coleta automática não gera resumos nem
+executa pesquisas web; o agente pode consultar os textos por documento.
 
-A extração de evidências por partes e as pesquisas usam o mesmo modelo
-configurado no serviço Copilot (`COPILOT_MODEL`, padrão `gpt-5.4`).
-O extrator não chama mais o OpenRouter.
+## Pesquisa web do agente
 
-Configure no **extrator**:
+Configure `OPENROUTER_API_KEY` no ambiente do serviço extrator. Opcionalmente,
+defina `OPENROUTER_MODEL`; o padrão é `openrouter/auto`, com o plugin web do
+OpenRouter. O uso da pesquisa web pode gerar custos no provedor.
 
-```env
-COPILOT_BASE_URL=http://nome-interno-do-servico-copilot:8080
-COPILOT_SERVICE_KEY=mesma-chave-privada-configurada-no-servico-copilot
+`POST /jobs/{job_id}/pesquisar`, autenticado com `X-API-Key`, recebe:
+
+```json
+{
+  "consulta": "Confirme a retificação e a data da sessão desta contratação",
+  "escopo": "oficial"
+}
 ```
 
-Use a origem interna correta, sem caminho, query ou credenciais na URL.
-A chave deve ter pelo menos 32 caracteres. As variáveis `OPENROUTER_*`
-não são mais utilizadas. Preserve `EXTRACTOR_API_KEY`, o volume e a
-configuração de coleta/OCR. Não copie o arquivo de ambiente do frontend:
-essas variáveis pertencem ao serviço extrator no EasyPanel.
+`escopo` aceita `oficial` ou `fabricante`. Pesquisas oficiais restringem o
+plugin aos domínios `gov.br`, `comprasnet.gov.br` e `serpro.gov.br`, e a API
+filtra citações para esses domínios. Pesquisas de fabricante retornam citações
+HTTPS encontradas pelo provedor; o agente deve avaliar se são documentação
+primária do fabricante/mantenedor. Respostas sem citações verificáveis são
+rejeitadas. O resultado contém `resposta`, `fontes`, `consulta`, `escopo`,
+`consultado_em` e `modelo`, e é armazenado no job.
 
-Publique também a nova versão do serviço Copilot, com `/complete`, e
-autentique a conta GitHub com acesso ao Copilot. O modelo é escolhido
-exclusivamente nesse serviço, não em cada requisição do extrator.
-Não há fallback automático para OpenRouter.
+HTTP 429 do OpenRouter retorna 503 para indicar indisponibilidade temporária;
+timeout retorna 504. Cada chamada tem limite de 180 segundos.
 
-As pesquisas requerem ferramentas web disponíveis no Copilot e URLs
-observadas em execuções bem-sucedidas. Fontes oficiais continuam limitadas
-a `gov.br`, `comprasnet.gov.br` e `serpro.gov.br`. Sem ferramentas/fontes
-verificáveis, a pesquisa registra limitação, não confirmação.
-Cada parte gera uma sessão e consome a franquia/limites do Copilot.
-O timeout HTTP do extrator é 960 segundos por chamada.
-
-`DELETE /jobs/{job_id}`, autenticado com `X-API-Key`, interrompe a coleta e
-pesquisas locais, remove o protocolo SQLite e os documentos/dossiê daquele job.
-A operação é idempotente; IDs devem ter 32 caracteres hexadecimais.
-Resultados atrasados não recriam protocolos removidos.
-
-O aplicativo usa o coordenador Copilot pelo webhook n8n para também abortar a
-sessão de inferência. Chamadas já enviadas a provedores externos não podem ter
-seu consumo estornado.
+`DELETE /jobs/{job_id}`, autenticado com `X-API-Key`, interrompe a coleta,
+remove o protocolo SQLite e os documentos daquele job. A operação é
+idempotente; IDs devem ter 32 caracteres hexadecimais.
 
 Validação: `python -m unittest discover -p 'test_*.py'`.

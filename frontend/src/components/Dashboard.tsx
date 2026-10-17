@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { PregaoResultado, OportunidadeResultado, SummaryFilter } from '../types';
 import { formatBRL, formatCompactBRL } from '../format';
+import { getLocalDateKey, getUpcomingProposals } from '../scheduledProposals';
 
 interface DashboardProps {
   results: PregaoResultado[];
@@ -23,6 +24,7 @@ export function Dashboard({
   onOpenDiscarded,
   getProposalKey
 }: DashboardProps) {
+  const upcomingRegisteredCount = getUpcomingProposals(registered, getLocalDateKey(new Date())).length;
   const discardedKeySet = useMemo(() => {
     return new Set(discarded.map(getProposalKey).filter((k): k is string => k !== null));
   }, [discarded, getProposalKey]);
@@ -228,7 +230,7 @@ export function Dashboard({
           <div className="kpi-icon-wrapper">📅</div>
           <div className="kpi-content">
             <span className="kpi-label">Propostas agendadas</span>
-            <div className="kpi-value">{registered.length}</div>
+            <div className="kpi-value">{upcomingRegisteredCount}</div>
           </div>
         </div>
 
