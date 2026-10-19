@@ -63,6 +63,10 @@ test('refreshes the official status and updates saved proposals only for the cur
     const unavailable = await query({ id });
     assert.equal(unavailable.status, 502);
     assert.match((await unavailable.json()).error, /PNCP respondeu HTTP 503/);
+    status = 429;
+    const limited = await query({ id });
+    assert.equal(limited.status, 429);
+    assert.match((await limited.json()).error, /PNCP respondeu HTTP 429/);
     status = 200;
     data = {};
     const invalid = await query({ id });

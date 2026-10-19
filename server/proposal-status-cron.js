@@ -47,6 +47,10 @@ export function startProposalStatusCron({ db, fetchImpl = fetch }) {
         if (controller.signal.aborted) throw error;
         result.failed += rows.length;
         console.error(`Cron de situação: falha na proposta ${rows[0].proposal_key}:`, error.message);
+        if (error.statusCode === 429) {
+          console.warn('Cron de situação pausado porque o PNCP aplicou limite de requisições.');
+          break;
+        }
       }
       await setTimeout(500, undefined, { signal: controller.signal });
     }

@@ -139,8 +139,12 @@ async function requireUpstreamSuccess(response, service) {
   } catch {
     // Proxy HTML is not suitable for display as an application error.
   }
-  throw Object.assign(new Error(`${service} respondeu HTTP ${response.status}.${detail ? ` ${detail}` : ''}`), {
-    statusCode: response.status === 504 ? 504 : 502
+  const retryAfter = Number(response.headers.get('retry-after'));
+  const retryMessage = response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0
+    ? ` Tente novamente em aproximadamente ${Math.ceil(retryAfter)} s.`
+    : '';
+  throw Object.assign(new Error(`${service} respondeu HTTP ${response.status}.${detail ? ` ${detail}` : ''}${retryMessage}`), {
+    statusCode: response.status === 429 ? 429 : response.status === 504 ? 504 : 502
   });
 }
 

@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApiServer } from './app.js';
 import { startProposalStatusCron } from './proposal-status-cron.js';
+import { createPncpFetch } from './pncp-fetch.js';
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(serverDir, '../frontend/.env') });
@@ -16,6 +17,7 @@ database.pragma('journal_mode = WAL');
 database.pragma('foreign_keys = ON');
 
 const deadlineFromEnv = Number(process.env.DEADLINE_DEFAULT_DAYS);
+const pncpFetch = createPncpFetch();
 
 const server = createApiServer({
   db: database,
@@ -29,13 +31,14 @@ const server = createApiServer({
   staticDir: process.env.STATIC_DIR ?? resolve(serverDir, '../frontend/dist'),
   webhookUrl: process.env.VITE_API_BASE_URL,
   analysisWebhookUrl: process.env.ANALYSIS_WEBHOOK_URL,
-  analysisWorkflowKey: process.env.ANALYSIS_WORKFLOW_KEY
+  analysisWorkflowKey: process.env.ANALYSIS_WORKFLOW_KEY,
+  pncpFetch
 });
 
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4174);
 let statusCron;
 server.listen(port, '0.0.0.0', () => {
-  statusCron = startProposalStatusCron({ db: database });
+  statusCron = startProposalStatusCron({ db: database, fetchImpl: pncpFetch });
   console.log(`ComprasGov API listening on port ${port}`);
 });
 

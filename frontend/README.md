@@ -18,6 +18,10 @@ da mesma conta, preservando os demais dados.
 Enquanto consulta, o badge informa **Atualizando situação...**; em falhas ou
 identificação ausente, mantém a última situação e exibe **Situação não atualizada**
 com o detalhe no tooltip. Nunca presume uma situação nova sem resposta válida.
+As chamadas ao PNCP são serializadas entre os cards e o cron, com intervalo
+mínimo de um segundo. Ao receber HTTP 429, o servidor respeita `Retry-After`
+e pausa novas consultas durante o limite informado; os dados já exibidos são
+preservados.
 
 ### Cron de situação das propostas agendadas
 
@@ -25,8 +29,10 @@ A API executa `0 * * * *` em `America/Sao_Paulo`: no início de cada hora,
 consulta o PNCP e atualiza `situacao` no JSON de **todas** as propostas
 agendadas (`registered_proposals`), em todas as contas, incluindo datas
 passadas. O cron não depende de navegador aberto. Propostas iguais em
-contas diferentes compartilham uma consulta; chamadas são sequenciais,
-com intervalo de 500 ms e timeout de 30 segundos.
+contas diferentes compartilham uma consulta; chamadas usam a fila serializada
+compartilhada com a interface, com intervalo mínimo de 1 segundo e timeout de
+30 segundos. Se o PNCP retornar HTTP 429, o cron pausa o ciclo e preserva os
+dados ainda não atualizados.
 
 Falhas ou identificadores inválidos são registrados nos logs e preservam
 a última situação, sem impedir a atualização das demais propostas.
