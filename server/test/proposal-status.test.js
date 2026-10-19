@@ -7,7 +7,12 @@ test('refreshes the official status and updates saved proposals only for the cur
   const db = new Database(':memory:');
   const calls = [];
   let status = 200;
-  let data = { situacaoCompraNome: 'Suspensa' };
+  let data = {
+    situacaoCompraNome: 'Suspensa',
+    tipoInstrumentoConvocatorioNome: 'Aviso de Contratação Direta',
+    numeroCompra: '45',
+    anoCompra: 2026
+  };
   const server = createApiServer({
     db, authDisabled: true, username: 'fixture',
     pncpFetch: async (url, init) => {
@@ -30,11 +35,18 @@ test('refreshes the official status and updates saved proposals only for the cur
   try {
     const result = await query({ id, link });
     assert.equal(result.status, 200);
-    assert.deepEqual(await result.json(), { situacao: 'Suspensa' });
+    assert.deepEqual(await result.json(), {
+      situacao: 'Suspensa',
+      tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta',
+      numeroCompra: '45/2026'
+    });
     assert.deepEqual(calls, ['https://pncp.gov.br/api/consulta/v1/orgaos/12345678000199/compras/2026/31']);
     for (const table of ['registered_proposals', 'discarded_proposals']) {
       const saved = owner => JSON.parse(db.prepare(`SELECT value_json FROM ${table} WHERE owner = ?`).get(owner).value_json);
-      assert.deepEqual(saved('fixture'), { ...value, situacao: 'Suspensa' });
+      assert.deepEqual(saved('fixture'), {
+        ...value, situacao: 'Suspensa', tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta',
+        numeroCompra: '45/2026'
+      });
       assert.deepEqual(saved('another'), value);
     }
     assert.equal((await query({ id })).status, 200);

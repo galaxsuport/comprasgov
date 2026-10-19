@@ -75,15 +75,58 @@ test('status refresh forwards PNCP identifiers and abort signal and rejects inva
       assert.equal(target.searchParams.get('id'), proposal.idContratacaoPNCP);
       assert.equal(target.searchParams.get('link'), proposal.linkContratacao);
       assert.equal(init.signal, controller.signal);
-      return Response.json({ situacao: 'Suspensa' });
+      return Response.json({
+        situacao: 'Suspensa',
+        tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta',
+        numeroCompra: '45/2026'
+      });
     };
-    assert.equal(await api.fetchProposalStatus(proposal, controller.signal), 'Suspensa');
+    assert.deepEqual(await api.fetchProposalStatus(proposal, controller.signal), {
+      situacao: 'Suspensa',
+      tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta',
+      numeroCompra: '45/2026'
+    });
     globalThis.fetch = async () => Response.json({ error: 'PNCP indisponível' }, { status: 502 });
     await assert.rejects(api.fetchProposalStatus(proposal), /PNCP indisponível/);
     for (const body of [{}, { situacao: null }, { situacao: ' ' }]) {
       globalThis.fetch = async () => Response.json(body);
       await assert.rejects(api.fetchProposalStatus(proposal), /Resposta inválida/);
     }
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('normalizes the PNCP instrument type and purchase number', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => Response.json([{
+      tipoSaida: 'oportunidade',
+      numeroCompra: '45',
+      anoCompra: 2026,
+      tipoInstrumentoConvocatorioNome: 'Edital'
+    }]);
+    const { resultados } = await api.fetchResultados();
+    assert.equal(resultados[0].tipoInstrumentoConvocatorio, 'Edital');
+    assert.equal(resultados[0].numeroCompra, '45/2026');
+
+    globalThis.fetch = async () => Response.json([{
+      tipoSaida: 'oportunidade',
+      numeroCompra: '46',
+      anoCompra: 2026,
+      tipoInstrumentoConvocatorio: 2
+    }]);
+    const [withoutTypeName] = (await api.fetchResultados()).resultados;
+    assert.equal(withoutTypeName.tipoInstrumentoConvocatorio, null);
+    assert.equal(withoutTypeName.numeroCompra, '46/2026');
+
+    globalThis.fetch = async () => Response.json([{
+      tipoSaida: 'oportunidade',
+      tipo: 'Aviso de Contratação Direta',
+      numeroCompra: '47/2026'
+    }]);
+    const [otherType] = (await api.fetchResultados()).resultados;
+    assert.equal(otherType.tipoInstrumentoConvocatorio, 'Aviso de Contratação Direta');
   } finally {
     globalThis.fetch = original;
   }

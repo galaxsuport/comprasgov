@@ -7,11 +7,14 @@ Quando a situação é **Suspensa**, seu badge usa o mesmo destaque vermelho do 
 tanto para dados salvos quanto após a atualização ao abrir o card.
 
 Ao abrir um card de oportunidade, a situação é consultada na API oficial do
-PNCP por meio do servidor e substitui a situação da última pesquisa.
+PNCP por meio do servidor e substitui a situação da última pesquisa. O tipo
+do instrumento convocatório e o número/ano oficiais da compra também são
+consultados e exibidos no cabeçalho do card.
 Não há polling nem atualização periódica da situação: a consulta ocorre
 na montagem do card ou quando sua identificação PNCP muda. Aplica-se também
 a cards abertos a partir de propostas salvas. O servidor atualiza a situação
-salva de agendadas/descartadas da mesma conta, preservando os demais dados.
+e os dados oficiais do instrumento nas propostas salvas agendadas/descartadas
+da mesma conta, preservando os demais dados.
 Enquanto consulta, o badge informa **Atualizando situação...**; em falhas ou
 identificação ausente, mantém a última situação e exibe **Situação não atualizada**
 com o detalhe no tooltip. Nunca presume uma situação nova sem resposta válida.

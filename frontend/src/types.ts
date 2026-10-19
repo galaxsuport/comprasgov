@@ -25,6 +25,7 @@ export interface OportunidadeResultado {
   orgao: string | null;
   unidadeCompradora: string | null;
   uasg?: string | null;
+  tipoInstrumentoConvocatorio?: string | null;
   numeroCompra?: string | null;
   codigoModalidade: number | null;
   modalidadeIdPncp: number | null;
@@ -51,4 +52,3 @@ export interface OportunidadeResultado {
 export type PregaoResultado = ResumoResultado | OportunidadeResultado;
 
 export type SummaryFilter = 'dispensas' | 'pregao' | 'sigiloso' | 'srp' | null;
-

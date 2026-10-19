@@ -83,3 +83,43 @@ test('suspended status uses the red SRP styling without changing other statuses'
     assert.doesNotMatch(html, /badge-suspended/);
   }
 });
+
+test('expired proposal deadline shows a red closed-submission message', () => {
+  const html = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, dataEncerramentoProposta: new Date(Date.now() - 1000).toISOString() }
+  }));
+  assert.match(html, /<div class="card-time-expired"><span>Tempo restante<\/span><strong>Envio de proposta encerrada<\/strong><\/div>/);
+  assert.doesNotMatch(html, /0 dias, 0 horas e 0 minutos restantes/);
+});
+
+test('proposal deadline in the future keeps the remaining-time display', () => {
+  const html = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, dataEncerramentoProposta: new Date(Date.now() + 60 * 60 * 1000).toISOString() }
+  }));
+  assert.match(html, /<div><span>Tempo restante<\/span><strong>\d+ dias, \d+ horas? e \d+ minutos? restantes<\/strong><\/div>/);
+  assert.doesNotMatch(html, /card-time-expired|Envio de proposta encerrada/);
+});
+
+test('opportunity header shows instrument type and purchase number between location and buyer', () => {
+  const html = renderToStaticMarkup(createElement(ResultCard, {
+    result: {
+      ...result,
+      local: 'Brasília/DF',
+      unidadeCompradora: '123456 - Órgão/DF',
+      tipoInstrumentoConvocatorio: 'Edital'
+    }
+  }));
+  assert.ok(html.indexOf('<h2>Brasília/DF</h2>') < html.indexOf('<p class="subline">Edital Nº 326/2027</p>'));
+  assert.ok(html.indexOf('<p class="subline">Edital Nº 326/2027</p>') < html.indexOf('<p class="subline">123456 - Órgão/DF</p>'));
+});
+
+test('opportunity header displays other instrument types and does not assume Edital', () => {
+  const otherType = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta' }
+  }));
+  assert.match(otherType, /<p class="subline">Aviso de Contratação Direta Nº 326\/2027<\/p>/);
+
+  const missingType = renderToStaticMarkup(createElement(ResultCard, { result }));
+  assert.match(missingType, /<p class="subline">Nº 326\/2027<\/p>/);
+  assert.doesNotMatch(missingType, /Edital Nº 326\/2027/);
+});

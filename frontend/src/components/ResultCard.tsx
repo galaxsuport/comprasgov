@@ -44,6 +44,8 @@ export default function ResultCard({
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
   const [proposalLinkError, setProposalLinkError] = useState(false);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [liveInstrumentType, setLiveInstrumentType] = useState<string | null>(null);
+  const [livePurchaseNumber, setLivePurchaseNumber] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const proposalId = isResumo(result) ? null : result.idContratacaoPNCP;
@@ -52,15 +54,19 @@ export default function ResultCard({
   const proposalKey = isResumo(result) ? null : getProposalKey(result);
   useEffect(() => {
     setLiveStatus(null);
+    setLiveInstrumentType(null);
+    setLivePurchaseNumber(null);
     setStatusError(null);
     if (!opportunity) return;
     const controller = new AbortController();
     setStatusLoading(true);
     void fetchProposalStatus({ idContratacaoPNCP: proposalId, linkContratacao: pncpLink }, controller.signal)
-      .then(status => {
+      .then(details => {
         if (!controller.signal.aborted) {
-          setLiveStatus(status);
-          if (proposalKey) onStatusUpdated?.(proposalKey, status);
+          setLiveStatus(details.situacao);
+          setLiveInstrumentType(details.tipoInstrumentoConvocatorio);
+          setLivePurchaseNumber(details.numeroCompra);
+          if (proposalKey) onStatusUpdated?.(proposalKey, details.situacao);
         }
       })
       .catch(err => {
@@ -120,6 +126,11 @@ export default function ResultCard({
   const proposalLinkLabel = result.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
 
   const unidadeCompradora = result.unidadeCompradora;
+  const tipoInstrumentoConvocatorio = liveInstrumentType ?? result.tipoInstrumentoConvocatorio;
+  const numeroCompra = livePurchaseNumber ?? result.numeroCompra;
+  const edital = numeroCompra
+    ? `${tipoInstrumentoConvocatorio ? `${tipoInstrumentoConvocatorio} ` : ''}Nº ${numeroCompra}`
+    : null;
   const situacao = liveStatus ?? result.situacao;
   const suspended = situacao?.trim().toLocaleLowerCase('pt-BR') === 'suspensa';
   const scorePercent = Number.isFinite(result.score)
@@ -146,6 +157,7 @@ export default function ResultCard({
             </div>
           </div>
           <h2>{result.local ?? 'Local não informado'}</h2>
+          {edital ? <p className="subline">{edital}</p> : null}
           {unidadeCompradora ? (
             <p className="subline">{unidadeCompradora}</p>
           ) : null}
@@ -216,10 +228,7 @@ export default function ResultCard({
           <span>Abertura da sessão</span>
           <strong>{formatDateTime(result.dataEncerramentoProposta)}</strong>
         </div>
-        <div>
-          <span>Tempo restante</span>
-          <strong><TimeRemaining deadline={result.dataEncerramentoProposta} /></strong>
-        </div>
+        <TimeRemaining deadline={result.dataEncerramentoProposta} />
       </div>
 
       <div className="card-meta">

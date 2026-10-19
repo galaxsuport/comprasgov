@@ -262,7 +262,7 @@ export function proposalIdentity(id, link) {
   return { cnpj: match[1], ano: match[3], sequencial: String(Number(match[2])) };
 }
 
-export async function lookupProposalStatus(id, link, fetchImpl = fetch, signal) {
+export async function lookupProposalDetails(id, link, fetchImpl = fetch, signal) {
   const { cnpj, ano, sequencial } = proposalIdentity(id, link);
   const target = `https://pncp.gov.br/api/consulta/v1/orgaos/${cnpj}/compras/${ano}/${sequencial}`;
   const upstream = await fetchImpl(target, {
@@ -275,7 +275,24 @@ export async function lookupProposalStatus(id, link, fetchImpl = fetch, signal) 
   if (typeof situacao !== 'string' || !situacao.trim()) {
     throw new Error('PNCP retornou uma situação inválida ou não informada.');
   }
-  return situacao.trim();
+  const tipoInstrumentoConvocatorio = typeof data?.tipoInstrumentoConvocatorioNome === 'string'
+    && data.tipoInstrumentoConvocatorioNome.trim()
+    ? data.tipoInstrumentoConvocatorioNome.trim()
+    : null;
+  const numeroCompra = data?.numeroCompra == null ? '' : String(data.numeroCompra).trim();
+  const anoCompra = data?.anoCompra == null ? '' : String(data.anoCompra).trim();
+  const numeroCompraCompleto = numeroCompra
+    ? numeroCompra.includes('/') || !anoCompra ? numeroCompra : `${numeroCompra}/${anoCompra}`
+    : null;
+  return {
+    situacao: situacao.trim(),
+    tipoInstrumentoConvocatorio,
+    numeroCompra: numeroCompraCompleto
+  };
+}
+
+export async function lookupProposalStatus(id, link, fetchImpl = fetch, signal) {
+  return (await lookupProposalDetails(id, link, fetchImpl, signal)).situacao;
 }
 
 function serveStatic(request, response, pathname, staticDir) {
@@ -818,7 +835,7 @@ export function createApiServer({
       try {
         const id = url.searchParams.get('id');
         const link = url.searchParams.get('link');
-        const status = await lookupProposalStatus(id, link, pncpFetch);
+        const details = await lookupProposalDetails(id, link, pncpFetch);
         db.transaction(() => {
           for (const table of ['discarded_proposals', 'registered_proposals']) {
             const rows = db.prepare(`SELECT proposal_key, value_json FROM ${table} WHERE owner = ?`).all(session.username);
@@ -826,12 +843,19 @@ export function createApiServer({
             for (const row of rows) {
               const proposal = JSON.parse(row.value_json);
               if ((id && proposal.idContratacaoPNCP === id) || (link && proposal.linkContratacao === link)) {
-                update.run(JSON.stringify({ ...proposal, situacao: status }), session.username, row.proposal_key);
+                update.run(JSON.stringify({
+                  ...proposal,
+                  situacao: details.situacao,
+                  ...(details.tipoInstrumentoConvocatorio
+                    ? { tipoInstrumentoConvocatorio: details.tipoInstrumentoConvocatorio }
+                    : {}),
+                  ...(details.numeroCompra ? { numeroCompra: details.numeroCompra } : {})
+                }), session.username, row.proposal_key);
               }
             }
           }
         })();
-        jsonResponse(response, 200, { situacao: status });
+        jsonResponse(response, 200, details);
       } catch (error) {
         console.error('Falha ao atualizar situação da proposta:', error.message);
         const failure = error.statusCode ? error : upstreamError('PNCP', error);

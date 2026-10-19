@@ -112,7 +112,11 @@ export async function fetchDiscarded(signal?: AbortSignal): Promise<Oportunidade
 export async function fetchProposalStatus(
   proposal: Pick<OportunidadeResultado, 'idContratacaoPNCP' | 'linkContratacao'>,
   signal?: AbortSignal
-): Promise<string> {
+): Promise<{
+  situacao: string;
+  tipoInstrumentoConvocatorio: string | null;
+  numeroCompra: string | null;
+}> {
   const params = new URLSearchParams();
   if (proposal.idContratacaoPNCP) params.set('id', proposal.idContratacaoPNCP);
   if (proposal.linkContratacao) params.set('link', proposal.linkContratacao);
@@ -123,7 +127,19 @@ export async function fetchProposalStatus(
     || typeof data.situacao !== 'string' || !data.situacao.trim()) {
     throw new Error('Resposta inválida ao atualizar a situação da proposta.');
   }
-  return data.situacao;
+  return {
+    situacao: data.situacao,
+    tipoInstrumentoConvocatorio: 'tipoInstrumentoConvocatorio' in data
+      && typeof data.tipoInstrumentoConvocatorio === 'string'
+      && data.tipoInstrumentoConvocatorio.trim()
+      ? data.tipoInstrumentoConvocatorio.trim()
+      : null,
+    numeroCompra: 'numeroCompra' in data
+      && typeof data.numeroCompra === 'string'
+      && data.numeroCompra.trim()
+      ? data.numeroCompra.trim()
+      : null
+  };
 }
 
 export async function discardProposal(proposal: OportunidadeResultado): Promise<void> {
@@ -395,6 +411,12 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     orgao: toString(item.orgao ?? orgaoEntidade.razaoSocial ?? unidadeOrgao.nomeUnidade),
     unidadeCompradora,
     uasg: codigoUnidade ?? unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? null,
+    tipoInstrumentoConvocatorio: toString(
+      item.tipoInstrumentoConvocatorioNome
+        ?? (typeof item.tipoInstrumentoConvocatorio === 'string' ? item.tipoInstrumentoConvocatorio : null)
+        ?? item.tipoEdital
+        ?? item.tipo
+    ),
     numeroCompra: buildNumeroCompra(item),
     codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : typeof item.codigoModalidadeConsulta === 'number' ? item.codigoModalidadeConsulta : null,
     modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : typeof item.modalidadeId === 'number' ? item.modalidadeId : null,
