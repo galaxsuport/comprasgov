@@ -8,6 +8,30 @@ const { outputText } = ts.transpileModule(readFileSync(new URL('../src/api.ts', 
 });
 const api = await import(`data:text/javascript;base64,${Buffer.from(`${outputText}\n//# sourceURL=frontend-api-under-test.js`).toString('base64')}`);
 
+test('forwards purchase number with UASG or region search filters', async () => {
+  const original = globalThis.fetch;
+  let requestedUrl;
+  try {
+    globalThis.fetch = async url => {
+      requestedUrl = new URL(url, 'http://localhost');
+      return Response.json([]);
+    };
+    await api.fetchResultados({ uasg: '985825', numeroCompra: '123/2026' });
+    assert.equal(requestedUrl.searchParams.get('uasg'), '985825');
+    assert.equal(requestedUrl.searchParams.get('numeroCompra'), '123/2026');
+    assert.equal(requestedUrl.searchParams.has('ufs'), false);
+
+    await api.fetchResultados({ ufs: 'SP,RJ', numeroCompra: '456' });
+    assert.equal(requestedUrl.searchParams.get('ufs'), 'SP,RJ');
+    assert.equal(requestedUrl.searchParams.get('numeroCompra'), '456');
+
+    await api.fetchResultados({ numeroCompra: '789/2026' });
+    assert.equal(requestedUrl.searchParams.get('numeroCompra'), '789/2026');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('shows actionable 502 errors and preserves upstream diagnostic messages', async () => {
   const original = globalThis.fetch;
   try {
@@ -58,6 +82,11 @@ test('cancellation stays distinguishable from a timeout and analysis parameters 
     await assert.rejects(api.fetchResultados(), /Tempo limite excedido/);
     assert.deepEqual(api.getAnalysisParams({ cadastroProposta: 'https://compras.gov.br?compra=98582505003262027' }),
       { uasg: '985825', numeroCompra: '326/2027' });
+    assert.deepEqual(api.getAnalysisParams({
+      uasg: '928552',
+      numeroCompra: '1',
+      cadastroProposta: 'https://compras.gov.br?compra=92855205000012026'
+    }), { uasg: '928552', numeroCompra: '1/2026' });
     assert.equal(api.getAnalysisParams({ uasg: 'bad', numeroCompra: '326/2027' }), null);
   } finally {
     globalThis.fetch = original;

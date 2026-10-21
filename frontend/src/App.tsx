@@ -34,6 +34,7 @@ import { Dashboard as DashboardView } from './components/Dashboard';
 interface FetchFilters {
   ufs?: string;
   uasg?: string;
+  numeroCompra?: string;
 }
 
 const REGIOES = {
@@ -53,7 +54,9 @@ function FilterControls({
 }) {
   const [ufs, setUfs] = useState<string[]>([]);
   const [uasg, setUasg] = useState('');
+  const [numeroCompra, setNumeroCompra] = useState('');
   const [uasgError, setUasgError] = useState<string | null>(null);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   const [abertas, setAbertas] = useState<string[]>([]);
 
@@ -75,12 +78,13 @@ function FilterControls({
         setUasgError('Informe o código da UASG com 6 dígitos.');
         return;
       }
-      onFilterChange({ uasg });
-      return;
     }
 
-    if (ufs.length === 0) return;
-    onFilterChange({ ufs: ufs.join(',') });
+    const filters: FetchFilters = {};
+    if (uasgAtiva) filters.uasg = uasg;
+    else if (ufs.length > 0) filters.ufs = ufs.join(',');
+    if (numeroCompra.trim()) filters.numeroCompra = numeroCompra.trim();
+    if (Object.keys(filters).length > 0) onFilterChange(filters);
   };
 
   const toggleUf = (uf: string) => {
@@ -95,28 +99,54 @@ function FilterControls({
   };
 
   return (
-    <aside className="sidebar">
-      <section className="filter-controls">
-        <div className="filter-group">
-          <label htmlFor="filter-uasg">UASG</label>
-          <input
-            id="filter-uasg"
-            type="text"
-            inputMode="numeric"
-            placeholder="Código com 6 dígitos"
-            value={uasg}
-            disabled={regioesAtivas}
-            aria-invalid={uasgError ? true : undefined}
-            aria-describedby={uasgError ? 'filter-uasg-error' : undefined}
-            onChange={event => handleUasgChange(event.target.value)}
-          />
-          {uasgError ? <p id="filter-uasg-error" className="login-error" role="alert">{uasgError}</p> : null}
-          {regioesAtivas ? <p className="filter-hint">Desmarque as regiões para filtrar por UASG.</p> : null}
+    <aside className={`sidebar${filtersExpanded ? ' is-expanded' : ''}`}>
+      <button
+        type="button"
+        className="sidebar-toggle"
+        aria-expanded={filtersExpanded}
+        aria-controls="search-filters"
+        onClick={() => setFiltersExpanded(expanded => !expanded)}
+      >
+        <span>Filtros da pesquisa</span>
+        <span className="sidebar-toggle-state">{filtersExpanded ? 'Ocultar' : 'Mostrar'}</span>
+      </button>
+      <section className="filter-controls" id="search-filters">
+        <div className="filter-primary-row">
+          <div className="filter-group">
+            <label htmlFor="filter-uasg">UASG</label>
+            <input
+              id="filter-uasg"
+              type="text"
+              inputMode="numeric"
+              placeholder="6 dígitos"
+              value={uasg}
+              disabled={regioesAtivas}
+              aria-invalid={uasgError ? true : undefined}
+              aria-describedby={uasgError ? 'filter-uasg-error' : undefined}
+              onChange={event => handleUasgChange(event.target.value)}
+            />
+            {uasgError ? <p id="filter-uasg-error" className="login-error" role="alert">{uasgError}</p> : null}
+          </div>
+
+          <div className="filter-group">
+            <label htmlFor="filter-numero-compra">Nº Compra</label>
+            <input
+              id="filter-numero-compra"
+              type="text"
+              inputMode="text"
+              placeholder="Ex.: 123/2026"
+              value={numeroCompra}
+              disabled={regioesAtivas}
+              onChange={event => setNumeroCompra(event.target.value)}
+            />
+          </div>
         </div>
+        {regioesAtivas ? <p className="filter-hint">Desmarque as regiões para filtrar por UASG.</p> : null}
 
         <div className="filter-group">
           <label htmlFor="deadline-slider">PRAZO</label>
-          <DeadlineSetting />
+          <DeadlineSetting disabled={numeroCompra.trim().length > 0} />
+          {numeroCompra.trim() ? <p className="filter-hint">Limpe o Nº Compra para ajustar o prazo.</p> : null}
         </div>
 
         <div className="filter-group">
@@ -374,7 +404,7 @@ function TermsEditor({ kind, label, placeholder }: { kind: TermKind; label: stri
 const MIN_DEADLINE = 1;
 const MAX_DEADLINE = 15;
 
-function DeadlineSetting() {
+function DeadlineSetting({ disabled = false }: { disabled?: boolean }) {
   const [value, setValue] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -419,7 +449,7 @@ function DeadlineSetting() {
         max={MAX_DEADLINE}
         step={1}
         value={value}
-        disabled={saving}
+        disabled={saving || disabled}
         style={{ '--progress': `${progress}%` } as CSSProperties}
         aria-valuetext={unit(value)}
         onChange={event => setValue(Number(event.target.value))}
@@ -1071,7 +1101,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [filters, setFilters] = useState<FetchFilters | null>(null);
 
   useEffect(() => {
-    if (!filters?.ufs && !filters?.uasg) return;
+    if (!filters?.ufs && !filters?.uasg && !filters?.numeroCompra) return;
     const activeFilters = filters;
 
     const controller = new AbortController();
@@ -1416,16 +1446,27 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
           />
         ) : null}
 
+        {showDiscarded ? (
+          <section className="dashboard-root discarded-view" aria-labelledby="discarded-title">
+            <div className="dashboard-header">
+              <div>
+                <h2 className="dashboard-title" id="discarded-title">Propostas descartadas</h2>
+                <p className="dashboard-subtitle">
+                  {discarded.length} proposta{discarded.length === 1 ? '' : 's'} salva{discarded.length === 1 ? '' : 's'} como descartada{discarded.length === 1 ? '' : 's'}.
+                </p>
+              </div>
+            </div>
+            <Summary
+              results={summaryResults}
+              discardedView={showDiscarded}
+              activeFilter={summaryFilter}
+              onSelectFilter={handleSummaryFilterChange}
+            />
+          </section>
+        ) : null}
+
         {baseResults.length > 0 ? (
           <>
-            {showDiscarded ? (
-              <Summary
-                results={summaryResults}
-                discardedView={showDiscarded}
-                activeFilter={summaryFilter}
-                onSelectFilter={handleSummaryFilterChange}
-              />
-            ) : null}
             {visibleResults.length > 0 ? (
               <section className="cards-shell">
                 {visibleResults.map((item, index) => (

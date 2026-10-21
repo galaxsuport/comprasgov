@@ -4,6 +4,7 @@ import type { OportunidadeResultado } from './types';
 interface FetchFilters {
   ufs?: string;
   uasg?: string;
+  numeroCompra?: string;
 }
 
 export interface FetchResultadosResponse {
@@ -195,7 +196,12 @@ export function getAnalysisParams(result: OportunidadeResultado): { uasg: string
   const code = [result.cadastroProposta, result.linkSistemaOrigem]
     .map(value => value?.match(/compra=(\d{6})(\d{2})(\d{5})(\d{4})(?:\D|$)/)).find(Boolean);
   const uasg = result.uasg ?? result.unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? code?.[1];
-  const numeroCompra = result.numeroCompra ?? (code ? `${Number(code[3])}/${code[4]}` : null);
+  const rawNumeroCompra = result.numeroCompra?.trim();
+  const numeroCompra = rawNumeroCompra?.includes('/')
+    ? rawNumeroCompra
+    : code
+      ? `${Number(rawNumeroCompra || code[3])}/${code[4]}`
+      : rawNumeroCompra ?? null;
   return uasg && numeroCompra && /^\d{4,8}$/.test(uasg) && /^\d+\/\d{4}$/.test(numeroCompra)
     ? { uasg, numeroCompra } : null;
 }
@@ -256,6 +262,9 @@ function buildApiUrl(filters: FetchFilters = {}): string {
     params.set('uasg', filters.uasg);
   } else if (filters.ufs && filters.ufs !== 'todas') {
     params.set('ufs', filters.ufs);
+  }
+  if (filters.numeroCompra) {
+    params.set('numeroCompra', filters.numeroCompra);
   }
   // Quando "todas" é selecionado, não enviamos o parâmetro ufs
   // para que o webhook retorne todas as UFs por padrão

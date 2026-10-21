@@ -177,12 +177,12 @@ export default function CalendarPage({
   const selectedProposals = selectedDate ? (proposalsByDate.get(selectedDate) ?? []) : [];
 
   return (
-    <section className="settings-page calendar-page">
+    <section className="dashboard-root calendar-page">
       {error ? <div className="status-card status-error" role="alert">{error}</div> : null}
-      <div className="calendar-header-row">
+      <div className="dashboard-header calendar-header-row">
         <div>
-          <h2>Propostas agendadas</h2>
-          <p className="filter-hint">
+          <h2 className="dashboard-title">Propostas agendadas</h2>
+          <p className="dashboard-subtitle">
             {upcomingProposals.length === 0
               ? 'Nenhuma proposta agendada para hoje ou datas futuras. Use o botão "Agendar proposta" nos resultados da pesquisa para adicionar.'
               : `${upcomingProposals.length} proposta${upcomingProposals.length === 1 ? '' : 's'} agendada${upcomingProposals.length === 1 ? '' : 's'} para hoje ou datas futuras.`}
