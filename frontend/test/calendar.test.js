@@ -54,7 +54,7 @@ function render(proposals) {
     isDiscarded() { return false; }, onToggleDiscard() {}, onAnalyze() {},
     onCancelAnalysis() {}, isAnalysisStarting() { return false; },
     isAnalysisCancelling() { return false; }, getAnalysisJob() {},
-    onStatusUpdated() {}, error: null, onBack() {}
+    statusUpdates: new Map(), error: null, onBack() {}
   }));
 }
 

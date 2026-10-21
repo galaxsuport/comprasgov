@@ -160,3 +160,59 @@ test('normalizes the PNCP instrument type and purchase number', async () => {
     globalThis.fetch = original;
   }
 });
+
+test('status requests are serialized, stop during Retry-After and recover after cooldown', async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await Promise.resolve();
+    active--;
+    return calls === 1
+      ? Response.json({ error: 'PNCP respondeu HTTP 429. Tente novamente em aproximadamente 7 s.' },
+        { status: 429, headers: { 'Retry-After': '7' } })
+      : Response.json({ situacao: 'Suspensa' });
+  });
+  const requests = Array.from({ length: 14 }, (_, index) =>
+    api.fetchProposalStatus({ idContratacaoPNCP: `12345678000199-1-${index + 1}/2026` }));
+  const results = await Promise.allSettled(requests);
+  for (const result of results) {
+    assert.equal(result.status, 'rejected');
+    assert.match(result.reason.message, /PNCP respondeu HTTP 429/);
+  }
+  assert.equal(calls, 1);
+  now += 6999;
+  await assert.rejects(api.fetchProposalStatus({ idContratacaoPNCP: 'next' }), /HTTP 429/);
+  assert.equal(calls, 1);
+  now += 1;
+  const recovered = await Promise.all(Array.from({ length: 3 }, (_, index) =>
+    api.fetchProposalStatus({ idContratacaoPNCP: `recovered-${index}` })));
+  assert.equal(calls, 4);
+  assert.equal(maxActive, 1);
+  assert.ok(recovered.every(details => details.situacao === 'Suspensa'));
+});
+
+test('aborted status requests leave the queue without calling the API or blocking later requests', async t => {
+  let completeFirst;
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1) await new Promise(resolve => { completeFirst = resolve; });
+    return Response.json({ situacao: 'Divulgada' });
+  });
+  const first = api.fetchProposalStatus({ idContratacaoPNCP: 'first' });
+  const controller = new AbortController();
+  const cancelled = api.fetchProposalStatus({ idContratacaoPNCP: 'cancelled' }, controller.signal);
+  const last = api.fetchProposalStatus({ idContratacaoPNCP: 'last' });
+  const rejected = assert.rejects(cancelled, { name: 'AbortError' });
+  await Promise.resolve();
+  controller.abort();
+  completeFirst();
+  await Promise.all([first, rejected, last]);
+  assert.equal(calls, 2);
+});

@@ -110,7 +110,32 @@ export async function fetchDiscarded(signal?: AbortSignal): Promise<Oportunidade
   return response.json() as Promise<OportunidadeResultado[]>;
 }
 
+let proposalStatusQueue: Promise<void> = Promise.resolve();
+let proposalStatusBlockedUntil = 0;
+let proposalStatusLimitError: Error | null = null;
+
 export async function fetchProposalStatus(
+  proposal: Pick<OportunidadeResultado, 'idContratacaoPNCP' | 'linkContratacao'>,
+  signal?: AbortSignal
+): Promise<{
+  situacao: string;
+  tipoInstrumentoConvocatorio: string | null;
+  numeroCompra: string | null;
+}> {
+  const result = proposalStatusQueue.then(() => {
+    signal?.throwIfAborted();
+    if (proposalStatusLimitError && Date.now() < proposalStatusBlockedUntil) {
+      throw proposalStatusLimitError;
+    }
+    proposalStatusLimitError = null;
+    proposalStatusBlockedUntil = 0;
+    return requestProposalStatus(proposal, signal);
+  });
+  proposalStatusQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function requestProposalStatus(
   proposal: Pick<OportunidadeResultado, 'idContratacaoPNCP' | 'linkContratacao'>,
   signal?: AbortSignal
 ): Promise<{
@@ -122,6 +147,14 @@ export async function fetchProposalStatus(
   if (proposal.idContratacaoPNCP) params.set('id', proposal.idContratacaoPNCP);
   if (proposal.linkContratacao) params.set('link', proposal.linkContratacao);
   const response = await fetch(`/api/proposals/status?${params}`, { signal });
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get('Retry-After') ?? 30);
+    proposalStatusBlockedUntil = Date.now() + (
+      Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 30000
+    );
+    proposalStatusLimitError = new Error(await readApiError(response));
+    throw proposalStatusLimitError;
+  }
   if (!response.ok) throw new Error(await readApiError(response));
   const data: unknown = await response.json();
   if (!data || typeof data !== 'object' || !('situacao' in data)
@@ -157,8 +190,8 @@ export async function restoreProposal(key: string): Promise<void> {
   if (!response.ok) throw new Error(await readApiError(response));
 }
 
-export async function fetchRegistered(): Promise<OportunidadeResultado[]> {
-  const response = await fetch('/api/registered');
+export async function fetchRegistered(signal?: AbortSignal): Promise<OportunidadeResultado[]> {
+  const response = await fetch('/api/registered', { signal });
   if (!response.ok) throw new Error(await readApiError(response));
   return response.json() as Promise<OportunidadeResultado[]>;
 }

@@ -15,7 +15,7 @@ interface CalendarPageProps {
   isAnalysisStarting: (proposal: OportunidadeResultado) => boolean;
   isAnalysisCancelling: (proposal: OportunidadeResultado) => boolean;
   getAnalysisJob: (proposal: OportunidadeResultado) => AnalysisJob | undefined;
-  onStatusUpdated: (key: string, situacao: string) => void;
+  statusUpdates: ReadonlyMap<string, { loading: boolean; error: string | null }>;
   error: string | null;
   onBack: () => void;
 }
@@ -37,7 +37,7 @@ export default function CalendarPage({
   isAnalysisStarting,
   isAnalysisCancelling,
   getAnalysisJob,
-  onStatusUpdated,
+  statusUpdates,
   error,
   onBack
 }: CalendarPageProps) {
@@ -98,7 +98,8 @@ export default function CalendarPage({
       analysisStarting={isAnalysisStarting(proposal)}
       analysisCancelling={isAnalysisCancelling(proposal)}
       analysisJob={getAnalysisJob(proposal)}
-      onStatusUpdated={onStatusUpdated}
+      statusLoading={statusUpdates.get(getProposalKey(proposal) ?? '')?.loading}
+      statusError={statusUpdates.get(getProposalKey(proposal) ?? '')?.error}
     />
   );
 

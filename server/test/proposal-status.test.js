@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Database from 'better-sqlite3';
 import { createApiServer } from '../app.js';
+import { createPncpFetch } from '../pncp-fetch.js';
 
 test('refreshes the official status and updates saved proposals only for the current account', async () => {
   const db = new Database(':memory:');
@@ -66,6 +67,7 @@ test('refreshes the official status and updates saved proposals only for the cur
     status = 429;
     const limited = await query({ id });
     assert.equal(limited.status, 429);
+    assert.equal(limited.headers.get('retry-after'), '30');
     assert.match((await limited.json()).error, /PNCP respondeu HTTP 429/);
     status = 200;
     data = {};
@@ -73,6 +75,56 @@ test('refreshes the official status and updates saved proposals only for the cur
     assert.equal(invalid.status, 502);
     assert.match((await invalid.json()).error, /situação inválida/);
     assert.equal(JSON.parse(db.prepare('SELECT value_json FROM registered_proposals WHERE owner = ?').get('fixture').value_json).situacao, 'Suspensa');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    db.close();
+  }
+});
+
+test('a burst of status requests logs one rate limit, preserves saved data and recovers', async t => {
+  const errors = t.mock.method(console, 'error', () => {});
+  const db = new Database(':memory:');
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let calls = 0;
+  const pncpFetch = createPncpFetch({
+    now: () => now,
+    minIntervalMs: 0,
+    cacheTtlMs: 0,
+    fetchImpl: async () => {
+      calls++;
+      return calls === 1 || calls === 3
+        ? new Response(null, { status: 429 })
+        : Response.json({ situacaoCompraNome: 'Suspensa' });
+    }
+  });
+  const server = createApiServer({ db, authDisabled: true, username: 'fixture', pncpFetch });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const id = '12345678000199-1-31/2026';
+  const proposal = { idContratacaoPNCP: id, situacao: 'Divulgada', objeto: 'Servidor' };
+  db.prepare('INSERT INTO registered_proposals VALUES (?, ?, ?, ?)').run('fixture', `id:${id}`, JSON.stringify(proposal), 1);
+  const query = () => fetch(`${base}/api/proposals/status?${new URLSearchParams({ id })}`);
+  try {
+    const responses = await Promise.all(Array.from({ length: 14 }, query));
+    for (const response of responses) {
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get('retry-after'), '30');
+      assert.match((await response.json()).error, /aproximadamente 30 s/);
+    }
+    assert.equal(calls, 1);
+    assert.equal(errors.mock.callCount(), 1);
+    assert.deepEqual(JSON.parse(db.prepare('SELECT value_json FROM registered_proposals').get().value_json), proposal);
+    now += 30000;
+    const recovered = await query();
+    assert.equal(recovered.status, 200);
+    assert.equal((await recovered.json()).situacao, 'Suspensa');
+    assert.equal(calls, 2);
+    now += 30000;
+    const limitedAgain = await query();
+    assert.equal(limitedAgain.status, 429);
+    assert.equal(calls, 3);
+    assert.equal(errors.mock.callCount(), 2);
   } finally {
     await new Promise(resolve => server.close(resolve));
     db.close();

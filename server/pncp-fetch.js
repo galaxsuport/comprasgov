@@ -3,7 +3,7 @@ const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 30000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 1000;
 
-function retryAfterMs(response, now) {
+export function retryAfterMs(response, now) {
   const value = response.headers.get('retry-after');
   if (!value) return null;
   const seconds = Number(value);
@@ -52,6 +52,11 @@ export function createPncpFetch({
       if (response.status === 429) {
         const retryMs = retryAfterMs(response, now()) ?? rateLimitCooldownMs;
         blockedUntil = Math.max(blockedUntil, now() + retryMs);
+        const headers = new Headers(response.headers);
+        headers.set('Retry-After', String(Math.ceil((blockedUntil - now()) / 1000)));
+        return new Response(response.body, {
+          status: response.status, statusText: response.statusText, headers
+        });
       } else if (response.ok && cacheTtlMs > 0) {
         for (const [cachedKey, entry] of cache) {
           if (entry.expiresAt <= now()) cache.delete(cachedKey);

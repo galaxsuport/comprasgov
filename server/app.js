@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { retryAfterMs } from './pncp-fetch.js';
 import {
   DEFAULT_CONTEXTUAL_TERMS,
   DEFAULT_EXCLUSION_TERMS,
@@ -139,12 +140,15 @@ async function requireUpstreamSuccess(response, service) {
   } catch {
     // Proxy HTML is not suitable for display as an application error.
   }
-  const retryAfter = Number(response.headers.get('retry-after'));
-  const retryMessage = response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0
-    ? ` Tente novamente em aproximadamente ${Math.ceil(retryAfter)} s.`
+  const retryAfter = response.status === 429
+    ? Math.ceil((retryAfterMs(response, Date.now()) ?? (service === 'PNCP' ? 30000 : 0)) / 1000)
+    : null;
+  const retryMessage = retryAfter !== null && retryAfter > 0
+    ? ` Tente novamente em aproximadamente ${retryAfter} s.`
     : '';
   throw Object.assign(new Error(`${service} respondeu HTTP ${response.status}.${detail ? ` ${detail}` : ''}${retryMessage}`), {
-    statusCode: response.status === 429 ? 429 : response.status === 504 ? 504 : 502
+    statusCode: response.status === 429 ? 429 : response.status === 504 ? 504 : 502,
+    retryAfter
   });
 }
 
@@ -360,6 +364,7 @@ export function createApiServer({
   defaultDeadlineDays = DEFAULT_DEADLINE_DAYS,
   secureCookies = process.env.NODE_ENV === 'production'
 }) {
+  let statusRateLimitLogUntil = 0;
   if (authDisabled) {
     username = username || 'homologacao';
   } else if (!username || !password) {
@@ -861,9 +866,17 @@ export function createApiServer({
         })();
         jsonResponse(response, 200, details);
       } catch (error) {
-        console.error('Falha ao atualizar situação da proposta:', error.message);
         const failure = error.statusCode ? error : upstreamError('PNCP', error);
-        jsonResponse(response, failure.statusCode ?? 502, { error: failure.message });
+        if (failure.statusCode === 429) {
+          if (Date.now() >= statusRateLimitLogUntil) {
+            console.error('Falha ao atualizar situação da proposta:', failure.message);
+          }
+          statusRateLimitLogUntil = Math.max(statusRateLimitLogUntil, Date.now() + failure.retryAfter * 1000);
+        } else {
+          console.error('Falha ao atualizar situação da proposta:', failure.message);
+        }
+        jsonResponse(response, failure.statusCode ?? 502, { error: failure.message },
+          failure.statusCode === 429 ? { 'Retry-After': String(failure.retryAfter) } : {});
       }
       return;
     }

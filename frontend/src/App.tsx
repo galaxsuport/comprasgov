@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import {
   discardProposal,
   fetchDiscarded,
   fetchRegistered,
+  fetchProposalStatus,
   registerProposal,
   restoreProposal,
   unregisterProposal,
@@ -30,6 +31,7 @@ import ResultCard from './components/ResultCard';
 import CalendarPage from './components/CalendarPage';
 import { isTerminalAnalysis } from './analysisStatus';
 import { Dashboard as DashboardView } from './components/Dashboard';
+import { getUpcomingProposals } from './scheduledProposals';
 
 interface FetchFilters {
   ufs?: string;
@@ -977,10 +979,8 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [discarded, setDiscarded] = useState<OportunidadeResultado[]>([]);
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [registered, setRegistered] = useState<OportunidadeResultado[]>([]);
-  const [proposalStatuses, setProposalStatuses] = useState<Map<string, string>>(() => new Map());
-  const handleStatusUpdated = useCallback((key: string, situacao: string) => {
-    setProposalStatuses(current => current.get(key) === situacao ? current : new Map(current).set(key, situacao));
-  }, []);
+  const [statusUpdates, setStatusUpdates] = useState<Map<string, { loading: boolean; error: string | null }>>(() => new Map());
+  const statusRefreshRef = useRef<AbortController | null>(null);
   const [discardConfirmation, setDiscardConfirmation] = useState<OportunidadeResultado | null>(null);
   const discardDialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -989,6 +989,61 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
   const [showCalendar, setShowCalendar] = useState(false);
   const [proposalOperations, setProposalOperations] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (!showCalendar || settingsOpen) return;
+    return () => {
+      statusRefreshRef.current?.abort();
+      setStatusUpdates(new Map());
+    };
+  }, [showCalendar, settingsOpen]);
+
+  const openRegisteredProposals = async () => {
+    setSettingsOpen(false);
+    setShowDiscarded(false);
+    setShowCalendar(true);
+    statusRefreshRef.current?.abort();
+    const controller = new AbortController();
+    statusRefreshRef.current = controller;
+    setStatusUpdates(new Map());
+    setAppError(null);
+    try {
+      const proposals = await fetchRegistered(controller.signal);
+      if (controller.signal.aborted) return;
+      setRegistered(proposals);
+      const pending = getUpcomingProposals(proposals);
+      setStatusUpdates(new Map(pending.map(proposal => [
+        getProposalKey(proposal) ?? '', { loading: true, error: null }
+      ])));
+      for (const proposal of pending) {
+        if (controller.signal.aborted) break;
+        const key = getProposalKey(proposal) ?? '';
+        try {
+          const details = await fetchProposalStatus(proposal, controller.signal);
+          if (controller.signal.aborted) break;
+          const update = (item: OportunidadeResultado) => getProposalKey(item) === key
+            ? {
+              ...item,
+              situacao: details.situacao,
+              ...(details.tipoInstrumentoConvocatorio ? { tipoInstrumentoConvocatorio: details.tipoInstrumentoConvocatorio } : {}),
+              ...(details.numeroCompra ? { numeroCompra: details.numeroCompra } : {})
+            }
+            : item;
+          setRegistered(current => current.map(update));
+          setDiscarded(current => current.map(update));
+          setResultados(current => current.map(item => item.tipoSaida === 'oportunidade' ? update(item) : item));
+          setStatusUpdates(current => new Map(current).set(key, { loading: false, error: null }));
+        } catch (err) {
+          if (controller.signal.aborted) break;
+          const error = err instanceof Error ? err.message : 'Não foi possível atualizar a situação.';
+          setStatusUpdates(current => new Map(current).set(key, { loading: false, error }));
+        }
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setAppError(err instanceof Error ? err.message : 'Não foi possível carregar as propostas agendadas.');
+      }
+    }
+  };
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
   const [analysisStartingKeys, setAnalysisStartingKeys] = useState<Set<string>>(() => new Set());
   const analysisStartingRef = useRef(new Set<string>());
@@ -1391,7 +1446,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             isAnalysisStarting={proposal => analysisStartingKeys.has(getProposalKey(proposal) ?? '')}
             isAnalysisCancelling={proposal => analysisCancellingKeys.has(getProposalKey(proposal) ?? '')}
             getAnalysisJob={proposal => analysisJobs.find(job => job.proposalKey === getProposalKey(proposal))}
-            onStatusUpdated={handleStatusUpdated}
+            statusUpdates={statusUpdates}
             error={appError ?? analysisError}
             onBack={() => setShowCalendar(false)}
           />
@@ -1432,11 +1487,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
             onSelectFilter={filter => {
               handleSummaryFilterChange(filter);
             }}
-            onOpenCalendar={() => {
-              setSettingsOpen(false);
-              setShowDiscarded(false);
-              setShowCalendar(true);
-            }}
+            onOpenCalendar={() => { void openRegisteredProposals(); }}
             onOpenDiscarded={() => {
               setSettingsOpen(false);
               setShowCalendar(false);
@@ -1474,10 +1525,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
                     key={item.tipoSaida === 'oportunidade'
                       ? getProposalKey(item) ?? `${item.local ?? 'unknown'}-${index}`
                       : `resumo-${index}`}
-                    result={item.tipoSaida === 'oportunidade'
-                      ? { ...item, situacao: proposalStatuses.get(getProposalKey(item) ?? '') ?? item.situacao }
-                      : item}
-                    onStatusUpdated={handleStatusUpdated}
+                    result={item}
                     isRegistered={item.tipoSaida === 'oportunidade'
                       && registeredKeys.has(getProposalKey(item) ?? '')}
                     isRegistering={item.tipoSaida === 'oportunidade'

@@ -4,15 +4,19 @@ Este projeto exibe os resultados do endpoint n8n diretamente em uma interface mo
 
 A situação do edital aparece nos badges do cabeçalho de cada card, junto da modalidade, SRP e modo de disputa.
 Quando a situação é **Suspensa**, seu badge usa o mesmo destaque vermelho do SRP,
-tanto para dados salvos quanto após a atualização ao abrir o card.
+tanto para dados salvos quanto após uma atualização.
 
-Ao abrir um card de oportunidade, a situação é consultada na API oficial do
-PNCP por meio do servidor e substitui a situação da última pesquisa. O tipo
+Ao clicar no atalho de propostas cadastradas (**Propostas agendadas**) do painel,
+a API recarrega a lista salva e consulta a situação oficial no PNCP das propostas
+de hoje e futuras exibidas no calendário. O tipo
 do instrumento convocatório e o número/ano oficiais da compra também são
 consultados e exibidos no cabeçalho do card.
-Não há polling nem atualização periódica da situação: a consulta ocorre
-na montagem do card ou quando sua identificação PNCP muda. Aplica-se também
-a cards abertos a partir de propostas salvas. O servidor atualiza a situação
+Não há polling de situação no navegador. Montar cards de pesquisa, descartadas
+ou calendário, trocar datas/meses e abrir o calendário pelo botão de um card
+não consulta o PNCP. Um novo clique no atalho do painel inicia outro ciclo,
+respeitando o cache e o limite de requisições. Sair do calendário interrompe
+os pedidos pendentes. O cron horário do servidor permanece independente.
+O servidor atualiza a situação
 e os dados oficiais do instrumento nas propostas salvas agendadas/descartadas
 da mesma conta, preservando os demais dados.
 Enquanto consulta, o badge informa **Atualizando situação...**; em falhas ou
@@ -21,7 +25,13 @@ com o detalhe no tooltip. Nunca presume uma situação nova sem resposta válida
 As chamadas ao PNCP são serializadas entre os cards e o cron, com intervalo
 mínimo de um segundo. Ao receber HTTP 429, o servidor respeita `Retry-After`
 e pausa novas consultas durante o limite informado; os dados já exibidos são
-preservados.
+preservados. Na ausência desse cabeçalho, a pausa é de 30 segundos.
+O navegador também serializa os pedidos de atualização dos cards e, após
+um HTTP 429, não envia os pedidos restantes durante essa pausa. A API repassa
+`Retry-After` e registra o bloqueio apenas uma vez por período, sem repetir
+o mesmo erro para cada card. Os cards afetados mostram **Situação não atualizada**;
+não há repetição automática. Após a pausa, um novo clique no atalho do painel
+pode consultar novamente.
 
 ### Cron de situação das propostas agendadas
 

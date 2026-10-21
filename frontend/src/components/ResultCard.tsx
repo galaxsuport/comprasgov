@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { copyText } from '../copyText';
 import { formatDateTime, formatDuration } from '../format';
-import { fetchProposalStatus, getAnalysisParams, getProposalKey, type AnalysisJob } from '../api';
+import { getAnalysisParams, type AnalysisJob } from '../api';
 import { isTerminalAnalysis } from '../analysisStatus';
 import TimeRemaining from './TimeRemaining';
 import type { PregaoResultado, OportunidadeResultado, ResumoResultado } from '../types';
@@ -19,7 +19,8 @@ interface ResultCardProps {
   analysisCancelling?: boolean;
   analysisStarting?: boolean;
   analysisJob?: AnalysisJob;
-  onStatusUpdated?: (key: string, situacao: string) => void;
+  statusLoading?: boolean;
+  statusError?: string | null;
 }
 
 function isResumo(result: PregaoResultado): result is ResumoResultado {
@@ -39,46 +40,11 @@ export default function ResultCard({
   analysisCancelling = false,
   analysisStarting = false,
   analysisJob,
-  onStatusUpdated
+  statusLoading = false,
+  statusError = null
 }: ResultCardProps) {
   const [proposalLinkCopied, setProposalLinkCopied] = useState(false);
   const [proposalLinkError, setProposalLinkError] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<string | null>(null);
-  const [liveInstrumentType, setLiveInstrumentType] = useState<string | null>(null);
-  const [livePurchaseNumber, setLivePurchaseNumber] = useState<string | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
-  const proposalId = isResumo(result) ? null : result.idContratacaoPNCP;
-  const pncpLink = isResumo(result) ? null : result.linkContratacao;
-  const opportunity = !isResumo(result);
-  const proposalKey = isResumo(result) ? null : getProposalKey(result);
-  useEffect(() => {
-    setLiveStatus(null);
-    setLiveInstrumentType(null);
-    setLivePurchaseNumber(null);
-    setStatusError(null);
-    if (!opportunity) return;
-    const controller = new AbortController();
-    setStatusLoading(true);
-    void fetchProposalStatus({ idContratacaoPNCP: proposalId, linkContratacao: pncpLink }, controller.signal)
-      .then(details => {
-        if (!controller.signal.aborted) {
-          setLiveStatus(details.situacao);
-          setLiveInstrumentType(details.tipoInstrumentoConvocatorio);
-          setLivePurchaseNumber(details.numeroCompra);
-          if (proposalKey) onStatusUpdated?.(proposalKey, details.situacao);
-        }
-      })
-      .catch(err => {
-        if (!controller.signal.aborted) {
-          setStatusError(err instanceof Error ? err.message : 'Não foi possível atualizar a situação.');
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setStatusLoading(false);
-      });
-    return () => controller.abort();
-  }, [proposalId, pncpLink, opportunity, proposalKey, onStatusUpdated]);
   const analysisFinished = Boolean(analysisJob && isTerminalAnalysis(analysisJob));
   const analysisRunning = analysisStarting || analysisCancelling || Boolean(analysisJob && !analysisFinished);
   useEffect(() => {
@@ -126,12 +92,12 @@ export default function ResultCard({
   const proposalLinkLabel = result.linkContratacao ? 'Ver no PNCP' : 'Ver proposta';
 
   const unidadeCompradora = result.unidadeCompradora;
-  const tipoInstrumentoConvocatorio = liveInstrumentType ?? result.tipoInstrumentoConvocatorio;
-  const numeroCompra = livePurchaseNumber ?? result.numeroCompra;
+  const tipoInstrumentoConvocatorio = result.tipoInstrumentoConvocatorio;
+  const numeroCompra = result.numeroCompra;
   const edital = numeroCompra
     ? `${tipoInstrumentoConvocatorio ? `${tipoInstrumentoConvocatorio} ` : ''}Nº ${numeroCompra}`
     : null;
-  const situacao = liveStatus ?? result.situacao;
+  const situacao = result.situacao;
   const suspended = situacao?.trim().toLocaleLowerCase('pt-BR') === 'suspensa';
   const scorePercent = Number.isFinite(result.score)
     ? Math.min(100, Math.max(0, result.score))

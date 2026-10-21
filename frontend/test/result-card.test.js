@@ -123,3 +123,16 @@ test('opportunity header displays other instrument types and does not assume Edi
   assert.match(missingType, /<p class="subline">Nº 326\/2027<\/p>/);
   assert.doesNotMatch(missingType, /Edital Nº 326\/2027/);
 });
+
+test('status loading and failure indicators are controlled by the registered-proposals refresh', () => {
+  const idle = renderToStaticMarkup(createElement(ResultCard, { result }));
+  assert.doesNotMatch(idle, /Atualizando situação|Situação não atualizada/);
+  const loading = renderToStaticMarkup(createElement(ResultCard, { result, statusLoading: true }));
+  assert.match(loading, /Atualizando situação/);
+  const failed = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, situacao: 'Divulgada' },
+    statusError: 'PNCP respondeu HTTP 429.'
+  }));
+  assert.match(failed, /Situação do edital: Divulgada/);
+  assert.match(failed, /title="PNCP respondeu HTTP 429.">Situação não atualizada/);
+});
