@@ -136,7 +136,7 @@ function FilterControls({
               id="filter-numero-compra"
               type="text"
               inputMode="text"
-              placeholder="Ex.: 123/2026"
+              placeholder="Ex.: 123/2026 ou 1232026"
               value={numeroCompra}
               disabled={regioesAtivas}
               onChange={event => setNumeroCompra(event.target.value)}
@@ -1114,7 +1114,7 @@ function MainApp({ authRequired, onLogout }: { authRequired: boolean; onLogout: 
     const key = getProposalKey(proposal);
     const params = getAnalysisParams(proposal);
     if (!key || !params) {
-      setAppError('UASG ou número da compra indisponível para análise.');
+      setAppError('Id contratação PNCP indisponível para análise.');
       return;
     }
     if (analysisStartingRef.current.has(key) || analysisCancellingRef.current.has(key)) return;

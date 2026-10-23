@@ -37,7 +37,7 @@ test('reports upstream HTML errors, connection failures and timeouts without los
   const base = `http://127.0.0.1:${api.address().port}`;
   const start = () => fetch(`${base}/api/analysis`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ proposal: { tipoSaida: 'oportunidade', idContratacaoPNCP: 'test', uasg: '985825', numeroCompra: '1/2027' } })
+    body: JSON.stringify({ proposal: { tipoSaida: 'oportunidade', idContratacaoPNCP: '40176679000199-1-1/2027', uasg: '985825', numeroCompra: '1/2027' } })
   });
   try {
     let response = await fetch(`${base}/api/pregoes`);

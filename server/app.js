@@ -1043,9 +1043,10 @@ export function createApiServer({
       if (pathname === '/api/analysis' && request.method === 'POST') {
         const body = await readJson(request);
         const proposal = normalizeProposal(body?.proposal);
-        if (!proposal || !/^\d{4,8}$/.test(proposal.value.uasg ?? '')
-          || !/^\d+\/\d{4}$/.test(proposal.value.numeroCompra ?? '')) {
-          jsonResponse(response, 400, { error: 'Informe uma proposta com UASG e número da compra válidos.' });
+        const pncpId = proposal?.value.idContratacaoPNCP;
+        const pncpIdMatch = typeof pncpId === 'string' ? /^(\d{14})-1-(\d+)\/(\d{4})$/.exec(pncpId) : null;
+        if (!proposal || !pncpIdMatch || !Number.isSafeInteger(Number(pncpIdMatch[2])) || Number(pncpIdMatch[2]) < 1) {
+          jsonResponse(response, 400, { error: 'Informe uma proposta com Id contratação PNCP válido.' });
           return;
         }
         const lock = JSON.stringify([session.username, proposal.key]);
@@ -1070,7 +1071,7 @@ export function createApiServer({
           const startedAt = Date.now();
           const data = analysisObject(await callAnalysis(analysisWebhookUrl, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ UASG: proposal.value.uasg, numeroCompra: proposal.value.numeroCompra })
+            body: JSON.stringify({ idContratacaoPNCP: pncpId })
           }));
           if (typeof data.job_id !== 'string' || !analysisId.test(data.job_id)) {
             throw new Error('Resposta inesperada do serviço de análise.');

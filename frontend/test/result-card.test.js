@@ -25,7 +25,7 @@ function moduleUrl(path) {
 const { default: ResultCard } = await import(moduleUrl(new URL('../src/components/ResultCard.tsx', import.meta.url)));
 const result = {
   tipoSaida: 'oportunidade',
-  idContratacaoPNCP: 'test',
+  idContratacaoPNCP: '40176679000199-1-326/2027',
   uasg: '985825',
   numeroCompra: '326/2027',
   linkContratacao: 'https://pncp.gov.br/test',
@@ -109,19 +109,35 @@ test('opportunity header shows instrument type and purchase number between locat
       tipoInstrumentoConvocatorio: 'Edital'
     }
   }));
-  assert.ok(html.indexOf('<h2>Brasília/DF</h2>') < html.indexOf('<p class="subline">Edital Nº 326/2027</p>'));
-  assert.ok(html.indexOf('<p class="subline">Edital Nº 326/2027</p>') < html.indexOf('<p class="subline">123456 - Órgão/DF</p>'));
+  assert.ok(html.indexOf('<h2>Brasília/DF</h2>') < html.indexOf('<p class="subline">Edital nº 326/2027</p>'));
+  assert.ok(html.indexOf('<p class="subline">Edital nº 326/2027</p>') < html.indexOf('<p class="subline">123456 - Órgão/DF</p>'));
 });
 
 test('opportunity header displays other instrument types and does not assume Edital', () => {
   const otherType = renderToStaticMarkup(createElement(ResultCard, {
     result: { ...result, tipoInstrumentoConvocatorio: 'Aviso de Contratação Direta' }
   }));
-  assert.match(otherType, /<p class="subline">Aviso de Contratação Direta Nº 326\/2027<\/p>/);
+  assert.match(otherType, /<p class="subline">Aviso de Contratação Direta nº 326\/2027<\/p>/);
 
   const missingType = renderToStaticMarkup(createElement(ResultCard, { result }));
-  assert.match(missingType, /<p class="subline">Nº 326\/2027<\/p>/);
-  assert.doesNotMatch(missingType, /Edital Nº 326\/2027/);
+  assert.match(missingType, /<p class="subline">nº 326\/2027<\/p>/);
+  assert.doesNotMatch(missingType, /Edital nº 326\/2027/);
+});
+
+test('opportunity header adds the PNCP year when the purchase number has no year', () => {
+  const html = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, idContratacaoPNCP: '40176679000199-1-000326/2027', numeroCompra: '326' }
+  }));
+  assert.match(html, /<p class="subline">nº 326\/2027<\/p>/);
+});
+
+test('analysis button remains clickable and reports when the PNCP ID is missing', () => {
+  const html = renderToStaticMarkup(createElement(ResultCard, {
+    result: { ...result, idContratacaoPNCP: null, linkContratacao: null },
+    onAnalyze() {}
+  }));
+  assert.match(html, /<button[^>]*class="discard-toggle analyze-btn"[^>]*title="Id contratação PNCP indisponível"/);
+  assert.doesNotMatch(html, /<button[^>]*class="discard-toggle analyze-btn"[^>]*disabled=""/);
 });
 
 test('status loading and failure indicators are controlled by the registered-proposals refresh', () => {

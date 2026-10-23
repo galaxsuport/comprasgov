@@ -1,0 +1,1699 @@
+{
+  "name": "PNCP - Pesquisa",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "pncp-pesquisar",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "743e31b6-befe-4076-863f-56c17422237b",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -6656,
+        832
+      ],
+      "webhookId": "e42c3d54-718a-4cb1-a31f-04ee7aa91df2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PNCP TIC — parâmetros de pesquisa.\n// UFs OU UASG (exclusivos). Prazo obrigatório em dias.\n// Listas opcionais, separadas por vírgulas ou arrays:\n// termosFortes, termosContextuais, contextosTecnologicos, termosExclusao.\n// Sem valores fixos de prazo ou palavras-chave.\n// Modalidades e pesos de pontuação permanecem fixos.\n\nconst iniciadoEmMs=Date.now();\nconst query={...($json.body && typeof $json.body==='object' && !Array.isArray($json.body)?$json.body:{}),...($json.query??{})};\nconst TODAS_UFS=['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];\n\nfunction lista(v){\n  if(Array.isArray(v)) return v.flatMap(x=>String(x??'').split(',')).map(x=>x.trim()).filter(Boolean);\n  return String(v??'').split(',').map(x=>x.trim()).filter(Boolean);\n}\n\n// UASG aceita um código ou lista separada por vírgulas. Preserva zeros iniciais.\nconst uasgsEntrada=query.uasgs??query.uasg??query.UASG;\nconst uasgs=[...new Set(lista(uasgsEntrada).flatMap(v=>String(v??'').split(',')).map(v=>v.trim()).filter(Boolean))];\nconst uasgsInvalidas=uasgs.filter(v=>!/^\\d{6}$/.test(v));\nconst erroFiltroUasg=uasgsInvalidas.length\n  ? 'UASG inválida: '+uasgsInvalidas.join(', ')+'. Informe códigos com exatamente 6 dígitos, separados por vírgulas quando houver mais de um.'\n  : null;\n\n// Busca exata: UASG + numeroCompra (NNNNN/AAAA ou idCompra com 17 digitos).\n// Tem prioridade absoluta sobre UF, prazo, modalidade, status e termos TIC.\nconst numeroCompraEntrada=query.numeroCompra??query.numero_compra??query.numeroDaCompra;\nconst numeroCompra=String(numeroCompraEntrada??'').trim();\nconst modoBuscaCompra=numeroCompra.length>0;\nlet erroCompra=null;\nlet idsCompra=[];\nif(modoBuscaCompra){\n  if(uasgs.length!==1 || erroFiltroUasg){\n    erroCompra='Para pesquisa por numeroCompra, informe exatamente uma UASG valida com 6 digitos.';\n  } else if(/^\\d{17}$/.test(numeroCompra)){\n    if(!numeroCompra.startsWith(uasgs[0]))erroCompra='O identificador da compra nao corresponde a UASG informada.';\n    else idsCompra=[numeroCompra];\n  } else {\n    const match=numeroCompra.match(/^(\\d{1,5})\\s*\\/\\s*(20\\d{2})$/);\n    if(!match){\n      erroCompra='Informe numeroCompra no formato 90012/2026 (numero/ano, ate 5 digitos) ou o idCompra de 17 digitos. O ano e obrigatorio.';\n    }else{\n      // O idCompra do Compras.gov.br tem 6 digitos de UASG + 2 de modalidade\n      // + 5 de numero + 4 de ano. Sem modalidade externa, consultamos\n      // os codigos candidatas na API oficial e verificamos os retornos.\n      const numero5=match[1].padStart(5,'0');\n      const ano=match[2];\n      const modalidadesId=['05','06','07','03','04','02','01','08','09','10','11','12'];\n      idsCompra=modalidadesId.map(mod=>uasgs[0]+mod+numero5+ano);\n    }\n  }\n}\n\nconst prazoEntrada=query.prazo;\nconst prazo=Number(prazoEntrada);\nconst prazoValido=prazoEntrada!==undefined && prazoEntrada!==null && String(prazoEntrada).trim()!=='' && Number.isInteger(prazo) && prazo>=1 && prazo<=365;\nconst erroPrazo=prazoValido?null:'Informe prazo em dias: um número inteiro entre 1 e 365, sem valor padrão.';\nconst termosFortes=[...new Set(lista(query.termosFortes))];\nconst termosContextuais=[...new Set(lista(query.termosContextuais))];\nconst contextosTecnologicos=[...new Set(lista(query.contextosTecnologicos))];\nconst termosExclusao=[...new Set(lista(query.termosExclusao))];\nconst erroTermos=termosFortes.length || (termosContextuais.length && contextosTecnologicos.length)\n  ? null : 'Informe termosFortes ou a combinação termosContextuais + contextosTecnologicos para classificar as contratações.';\n\nconst ufsParametro=query.ufs??query.uf??query.UFs??query.UFS;\nconst temUfs=lista(ufsParametro).some(v=>String(v??'').trim()!=='');\nconst erroAlternativas=uasgs.length && temUfs\n  ? 'Informe apenas um filtro: UFs (ufs) ou UASG (uasg/uasgs). Os dois não podem ser usados juntos.' : null;\nconst ufsInformadas=lista(ufsParametro).map(v=>v.toUpperCase());\nconst ufsInvalidas=ufsInformadas.filter(v=>!TODAS_UFS.includes(v)&&!['TODAS','BR','*'].includes(v));\nconst erroLocalidade=!uasgs.length&&!temUfs?'Informe UFs (ufs) ou UASG (uasg/uasgs). Não há UF padrão.':ufsInvalidas.length?'UF inválida: '+ufsInvalidas.join(', '):null;\nconst erroFiltroPesquisa=modoBuscaCompra ? (erroCompra??erroFiltroUasg) : (erroFiltroUasg??erroAlternativas??erroLocalidade??erroPrazo??erroTermos);\n\nconst limite=new Date();\nlimite.setDate(limite.getDate()+prazo);\nconst dataFinal=`${limite.getFullYear()}${String(limite.getMonth()+1).padStart(2,'0')}${String(limite.getDate()).padStart(2,'0')}`;\n\nconst ufsEntrada = ufsParametro;\n\nlet ufs = (ufsEntrada === undefined || ufsEntrada === null || ufsEntrada === '')\n  ? []\n  : lista(ufsEntrada).map(x => x.toUpperCase());\n\nif (ufs.some(x => ['TODAS', 'BR', '*'].includes(x))) {\n  ufs = TODAS_UFS;\n}\n\nufs = [...new Set(ufs.filter(x => TODAS_UFS.includes(x)))];\n\n\n// Com UASG, consulta diretamente a unidade e o CNPJ do órgão, sem parâmetro uf.\n// Sem UASG, usa apenas as UFs explicitamente informadas.\nif(uasgs.length && !erroFiltroUasg) ufs=[null];\n\nconst modalidades=[\n  {codigoModalidade:6,modalidadeConsulta:'Pregão - Eletrônico'},\n  {codigoModalidade:7,modalidadeConsulta:'Pregão - Presencial'},\n  {codigoModalidade:8,modalidadeConsulta:'Dispensa'}\n];\n\nconst config={\n  iniciadoEmMs,\n  prazo:modoBuscaCompra?null:prazo,\n  uasgs,\n  modoBuscaCompra,\n  numeroCompra:modoBuscaCompra?numeroCompra:null,\n  erroFiltroUasg,\n  erroFiltroPesquisa,\n  scoreMinimo:5,\n  termosFortes,\n  termosContextuais,\n  contextosTecnologicos,\n  termosExclusao,\n  score:{\n    termoForte:10,\n    termoContextualComContexto:5,\n    termoExclusao:-8\n  }\n};\n\nif(erroFiltroPesquisa)return [{json:{config}}];\nif(modoBuscaCompra)return idsCompra.map(idCompraConsulta=>({json:{tipoItem:'buscar_compra_exata',idCompraConsulta,config}}));\n\n\n// Resolve UASGs em nós HTTP fora do Task Runner.\nif(uasgs.length)return uasgs.map(uasg=>({json:{tipoItem:'resolver_uasg',uasgConsulta:uasg,dataFinal,config,modalidades}}));\nconst grupos=ufs.map(uf=>({uf}));\n\nconst out=[];\nfor(const grupo of grupos){\n  for(const m of modalidades){\n    out.push({json:{\n      ...grupo,\n      codigoModalidade:m.codigoModalidade,\n      modalidadeConsulta:m.modalidadeConsulta,\n      dataFinal,\n      config\n    }});\n  }\n}\nreturn out;"
+      },
+      "id": "319b63bb-0efe-4c85-ae83-b4395ee8d62f",
+      "name": "Configurar pesquisa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6432,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out=[];\n\n// O input já está filtrado; os metadados originais vêm do nó de interpretação.\nconst filtradasPagina1=$input.all();\nconst interpretadas=$items('Interpretar página');\nconst interromper=filtradasPagina1.some(f=>Boolean(f.json.erroApiPncp));\n\nfor(let i=0;i<interpretadas.length;i++){\n  const x=interpretadas[i].json;\n  const f1=filtradasPagina1[i]?.json??null;\n\n  const total=Math.max(1,Number(x.payload?.totalPaginas??1));\n  const atual=Math.max(1,Number(x.payload?.numeroPagina??1));\n\n  // Item marcador: garante que o loop tenha uma execução mesmo quando só existe página 1.\n  // Não consulta o PNCP novamente; será tratado no node \"Preparar item do loop\".\n  out.push({json:{\n    tipoItem:'pagina1_cache',\n    uf:x.uf,\n    cnpj:x.cnpj,\n    uasgConsulta:x.uasgConsulta,\n    codigoModalidade:x.codigoModalidade,\n    modalidadeConsulta:x.modalidadeConsulta,\n    dataFinal:x.dataFinal,\n    config:x.config,\n    pagina:1,\n    pagina1Filtrada:f1\n  }});\n\n  if(interromper || x.erroApiPncp || f1?.erroApiPncp)continue;\n\n  for(let pagina=atual+1; pagina<=total; pagina++){\n    out.push({json:{\n      tipoItem:'consultar',\n      uf:x.uf,\n      cnpj:x.cnpj,\n      uasgConsulta:x.uasgConsulta,\n      codigoModalidade:x.codigoModalidade,\n      modalidadeConsulta:x.modalidadeConsulta,\n      dataFinal:x.dataFinal,\n      config:x.config,\n      pagina,\n      pagina1Filtrada:f1\n    }});\n  }\n}\n\nreturn out;"
+      },
+      "id": "ae55ebd0-24b9-474e-bf1e-fe681b3711a0",
+      "name": "Gerar páginas restantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4192,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://pncp.gov.br/api/consulta/v1/contratacoes/proposta",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({dataFinal:$json.dataFinal,codigoModalidadeContratacao:$json.codigoModalidade,tamanhoPagina:50,pagina:$json.pagina,...($json.uasgConsulta ? {cnpj:$json.cnpj,codigoUnidadeAdministrativa:$json.uasgConsulta} : ($json.uf ? {uf:$json.uf} : {}))}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "5aec5600-1ab5-48a9-8245-eb4200736ff4",
+      "name": "Consultar páginas restantes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3296,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 15000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parse(v){\n  if(v?.error||v?.errorMessage){\n    const erro=v.error??v;\n    const detalhe=String(typeof erro==='string'?erro:erro.message??v.errorMessage??JSON.stringify(erro));\n    const status=Number(erro.statusCode??erro.httpCode??v.httpCode??0);\n    return {payload:{data:[],numeroPagina:1,totalPaginas:1},erro:{tipo:status===429||/429|limite de requisi/i.test(detalhe)?'limite_requisicoes_excedido':'erro_conexao_pncp',codigo:String(status||erro.code||'HTTP'),mensagem:detalhe}};\n  }\n\n  // Quando o HTTP Request esgota os retries com 'Continue', o n8n entrega o erro como item.\n  const msg = String(v?.error?.message ?? v?.errorMessage ?? v?.message ?? '');\n  const code = String(v?.error?.code ?? v?.httpCode ?? v?.code ?? '');\n  const textoErro = `${msg} ${code}`;\n  if (/ECONNRESET|connection to the server was closed unexpectedly|socket hang up/i.test(textoErro)) {\n    return {\n      payload:{data:[],numeroPagina:1,totalPaginas:1},\n      erro:{\n        tipo:'erro_conexao_pncp',\n        codigo:'ECONNRESET',\n        mensagem:'A conexão com o PNCP foi encerrada inesperadamente após as tentativas automáticas.'\n      }\n    };\n  }\n\n  let raw=v;\n  if(v&&typeof v==='object'&&!Array.isArray(v)){\n    if(typeof v.data==='string') raw=v.data;\n    else if(typeof v.body==='string') raw=v.body;\n  }\n  if(typeof raw==='string'){\n    if(/limite de requisi(?:ç|c)(?:õ|o)es excedido/i.test(raw)){\n      return {payload:{data:[],numeroPagina:1,totalPaginas:1},erro:{tipo:'limite_requisicoes_excedido',codigo:'RATE_LIMIT',mensagem:'O PNCP bloqueou a consulta por excesso de requisições. A pesquisa foi interrompida.',amostra:raw.slice(0,1000)}};\n    }\n    try{return {payload:JSON.parse(raw),erro:null};}\n    catch(e){return {payload:{data:[]},erro:{tipo:'resposta_nao_json',mensagem:e.message,amostra:raw.slice(0,500)}};}\n  }\n  return {payload:(raw&&typeof raw==='object'?raw:{data:[]}),erro:null};\n}\n\nconst entradas=$input.all();\n// Saída false do IF na iteração atual, evitando reutilizar a primeira tarefa.\nconst tarefas=$items('Preparar item do loop',1);\nconst out=[];\n\nfor(let i=0;i<entradas.length;i++){\n  const tarefa=tarefas[i]?.json??{};\n  const p=parse(entradas[i].json);\n  out.push({json:{...tarefa,payload:p.payload,erroApiPncp:p.erro},pairedItem:{item:i}});\n}\nreturn out;"
+      },
+      "id": "f07a2c8b-9fbf-4cc7-ac30-6405c22085f8",
+      "name": "Interpretar páginas restantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3072,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction obterUasg(r){\n  // A fonte Compras.gov.br é verificada antes de aplicar o filtro.\n  const unidade=String(r.unidadeOrgao?.codigoUnidade??r.unidadeOrgaoCodigoUnidade??'').trim();\n  if(/^\\d{6}$/.test(unidade))return unidade;\n  const id=String(r.idCompra??'').trim();\n  if(/^\\d{17}$/.test(id))return id.slice(0,6);\n  const origem=String(r.linkSistemaOrigem??'');\n  if(/^https?:\\/\\/cnetmobile\\.estaleiro\\.serpro\\.gov\\.br\\//i.test(origem)){\n    const compra=origem.match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1];\n    if(compra)return compra.slice(0,6);\n  }\n  return null;\n}\nfunction norm(v){\n  return String(v??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')\n    .toLowerCase().replace(/[^\\p{L}\\p{N}\\s:/.-]+/gu,' ').replace(/\\s+/g,' ').trim();\n}\nfunction esc(v){return v.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&');}\nfunction tem(texto,termo){\n  const t=norm(termo); if(!t)return false;\n  return new RegExp(`(^|[^a-z0-9])${esc(t).replace(/\\s+/g,'\\\\s+')}([^a-z0-9]|$)`,'i').test(texto);\n}\nfunction dt(v){if(!v)return null;const d=new Date(v);return Number.isNaN(d.getTime())?null:d;}\n\n\nconst saida=[];\n\nfor(const item of $input.all()){\n  const x=item.json;\n  const payload=x.payload??{};\n  const config=x.config??{};\n  const registros=Array.isArray(payload.data)?payload.data:[];\n  const filtroUasgs=new Set(config.uasgs??[]);\n\n  const fortes=(config.termosFortes??[]).map(norm);\n  const contextuais=(config.termosContextuais??[]).map(norm);\n  const contextos=(config.contextosTecnologicos??[]).map(norm);\n  const exclusoes=(config.termosExclusao??[]).map(norm);\n\n  const agora=new Date();\n  const limite=new Date(agora);\n  limite.setDate(limite.getDate()+Number(config.prazo));\n\n  const diag={paginas:1,recebidos:registros.length,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,contratacoesComItensConsultados:0,requisicoesItens:0,aprovadosPelosItens:0,falhasConsultaItens:0,aprovados:0};\n  const aprovados=[];\n\n  for(const r of registros){\n    // Fonte da publicação no PNCP: aceitar somente Compras.gov.br.\n    // Fonte ausente também é rejeitada; links não substituem a identificação da fonte.\n    const fonte=String(r.usuarioNome??'').trim().toLowerCase();\n    if(fonte!=='compras.gov.br'){diag.fonteNaoPermitida++;continue;}\n    const uasg=obterUasg(r);\n    if(filtroUasgs.size && !filtroUasgs.has(uasg)){diag.uasgNaoPermitida++;continue;}\n    if(r.contratacaoExcluida===true){diag.excluidos++;continue;}\n\n    const situacao=norm(r.situacaoCompraNome??r.situacaoNome??r.situacao??'');\n    const bloqueados=['suspensa','suspenso','vencida','vencido','revogada','revogado','anulada','anulado','cancelada','cancelado','encerrada','encerrado','deserta','deserto','fracassada','fracassado'];\n    if(bloqueados.some(v=>situacao.includes(v))){diag.status++;continue;}\n\n    const fim=dt(r.dataEncerramentoProposta);\n    if(!fim||fim<=agora||fim>limite){diag.prazo++;continue;}\n\n\n    function avaliar(texto){\n      const tf=fortes.filter(t=>tem(texto,t));\n      const tc=contextuais.filter(t=>tem(texto,t));\n      const cx=contextos.filter(t=>tem(texto,t));\n      const ex=exclusoes.filter(t=>tem(texto,t));\n      let score=tf.length*Number(config.score?.termoForte??10);\n      if(tc.length&&cx.length)score+=Number(config.score?.termoContextualComContexto??5);\n      score+=ex.length*Number(config.score?.termoExclusao??-8);\n      return {score,palavras:[...new Set([...tf,...tc,...cx])]};\n    }\n    const texto=norm([r.objetoCompra,r.informacaoComplementar,r.justificativaPresencial].filter(Boolean).join(' '));\n    const avaliacaoObjeto=avaliar(texto);\n    let score=avaliacaoObjeto.score;\n    let palavras=avaliacaoObjeto.palavras;\n    let itensTICEncontrados=[];\n    let origemClassificacaoTIC='objeto';\n    if(score<Number(config.scoreMinimo??5)){diag.naoTIC++;diag.scoreInsuficiente++;continue;}\n\n    aprovados.push({...r,\n      uasg,\n      ufConsulta:item.json.uf,\n      codigoModalidadeConsulta:item.json.codigoModalidade,\n      modalidadeConsulta:item.json.modalidadeConsulta,\n      scoreRelevancia:score,\n      palavrasChaveEncontradas:palavras,\n      origemClassificacaoTIC,\n      itensTICEncontrados,\n      diasRestantes:Number(((fim-agora)/86400000).toFixed(2))\n    });\n    diag.aprovados++;\n  }\n\n  const erroApiPncp=item.json.erroApiPncp??null;\n  const popupErro=erroApiPncp\n    ? {\n        exibir:true,\n        tipo:erroApiPncp.tipo,\n        titulo:erroApiPncp.tipo==='erro_consulta_itens' ? 'Falha ao consultar itens do PNCP' : erroApiPncp.tipo==='limite_requisicoes_excedido' ? 'Limite de requisições excedido no PNCP' : erroApiPncp.tipo==='erro_conexao_pncp' ? 'Falha de conexão com o PNCP' : 'Erro na consulta ao PNCP',\n        mensagem:erroApiPncp.tipo==='erro_consulta_itens'\n          ? 'Não foi possível verificar os itens de uma contratação. A pesquisa foi interrompida para não apresentar um resultado incompleto como definitivo.'\n          : erroApiPncp.tipo==='limite_requisicoes_excedido'\n          ? 'O PNCP bloqueou a consulta por excesso de requisições. A pesquisa foi interrompida para não continuar enviando solicitações. Aguarde antes de tentar novamente.'\n          : erroApiPncp.tipo==='erro_conexao_pncp'\n          ? 'A conexão com o servidor do PNCP foi encerrada inesperadamente. As tentativas automáticas foram esgotadas. Aguarde alguns instantes e tente novamente.'\n          : 'O PNCP retornou uma resposta inválida ou não-JSON. Tente novamente em alguns instantes.',\n        detalhe:erroApiPncp.mensagem??null,\n        codigo:erroApiPncp.codigo??null,\n        amostra:erroApiPncp.amostra??null\n      }\n    : null;\n\n  saida.push({json:{\n    uf:item.json.uf,\n    codigoModalidade:item.json.codigoModalidade,\n    modalidadeConsulta:item.json.modalidadeConsulta,\n    pagina:Number(payload.numeroPagina??item.json.pagina??1),\n    totalPaginas:Number(payload.totalPaginas??1),\n    erroApiPncp,\n    popupErro,\n    diagnostico:diag,\n    config,\n    registros:aprovados\n  }});\n}\n\nreturn saida;"
+      },
+      "id": "b4242b43-7986-446b-a512-b3cd7c5068a7",
+      "name": "Filtrar páginas restantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2848,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const paginas=$input.all();\nconst vistos=new Set();\nconst oportunidades=[];\nlet popupErro=null;\n\nconst diagnostico={\n  paginas:0,recebidos:0,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,\n  fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,aprovadosAntesDedup:0,duplicados:0\n};\n\nfor(const p of paginas){\n  if(!popupErro && p.json.popupErro?.exibir===true){\n    popupErro=p.json.popupErro;\n  }\n\n  const d=p.json.diagnostico??{};\n  diagnostico.paginas+=Number(d.paginas??0);\n  diagnostico.recebidos+=Number(d.recebidos??0);\n  diagnostico.naoTIC+=Number(d.naoTIC??0);\n  diagnostico.scoreInsuficiente+=Number(d.scoreInsuficiente??0);\n  diagnostico.prazo+=Number(d.prazo??0);\n  diagnostico.status+=Number(d.status??0);\n  diagnostico.fonteNaoPermitida+=Number(d.fonteNaoPermitida??0);\n  diagnostico.excluidos+=Number(d.excluidos??0);\n  diagnostico.uasgNaoPermitida+=Number(d.uasgNaoPermitida??0);\n  diagnostico.aprovadosAntesDedup+=Number(d.aprovados??0);\n\n  for(const r of (p.json.registros??[])){\n    const chave=r.numeroControlePNCP || r.idCompra ||\n      [r.orgaoEntidade?.cnpj,r.anoCompra,r.sequencialCompra].filter(Boolean).join('-');\n\n    if(chave && vistos.has(chave)){\n      diagnostico.duplicados++;\n      continue;\n    }\n    if(chave) vistos.add(chave);\n    oportunidades.push(r);\n  }\n}\n\noportunidades.sort((a,b)=>\n  Number(b.scoreRelevancia??0)-Number(a.scoreRelevancia??0) ||\n  new Date(a.dataEncerramentoProposta??'2999-12-31')-\n  new Date(b.dataEncerramentoProposta??'2999-12-31')\n);\n\nreturn [{json:{diagnostico,oportunidades,popupErro}}];"
+      },
+      "id": "cc9c6d86-ef63-4c79-90b1-2769b5d225bb",
+      "name": "Consolidar e deduplicar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pacote=$json;\nconst tempoAnaliseSegundos=Number(((Date.now()-$('Configurar pesquisa').first().json.config.iniciadoEmMs)/1000).toFixed(2));\nconst diagnostico=pacote.diagnostico??{};\nconst oportunidades=pacote.oportunidades??[];\nconst popupErro=pacote.popupErro??null;\nconst configBusca=$('Configurar pesquisa').first().json.config;\n\nif(popupErro?.exibir===true){\n  return [{json:{\n    tempoAnaliseSegundos,\n    tipoSaida:'erro',\n    encontrouOportunidades:false,\n    popup:true,\n    titulo:popupErro.titulo??'Erro na consulta ao PNCP',\n    mensagem:popupErro.mensagem??'O PNCP retornou uma resposta inválida.',\n    tipoErro:popupErro.tipo??'resposta_nao_json',\n    detalhe:popupErro.detalhe??null,\n    amostra:popupErro.amostra??null,\n    diagnostico\n  }}];\n}\n\nfunction moeda(v){\n  if(v===null||v===undefined||v===''||Number(v)===0)return 'Sigiloso';\n  return Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});\n}\n\nif(!oportunidades.length){\n  return [{json:{\n    tempoAnaliseSegundos,\n    tipoSaida:'resumo',\n    encontrouOportunidades:false,\n    diagnostico,\n    ...(configBusca.modoBuscaCompra?{mensagem:`Compra ${configBusca.numeroCompra} nao encontrada para a UASG ${configBusca.uasgs.join(', ')}.`}: {})\n  }}];\n}\n\nfunction idCompraComprasGov(r){\n  // Reutiliza o identificador do sistema de origem; o número PNCP é diferente.\n  for(const texto of [r.linkSistemaOrigem,r.informacaoComplementar]){\n    const urls=String(texto??'').match(/https?:\\/\\/cnetmobile\\.estaleiro\\.serpro\\.gov\\.br\\/[^\\s<>\"']*/gi)??[];\n    for(const url of urls){\n      const id=url.match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1];\n      if(id)return id;\n    }\n  }\n  const id=String(r.idCompra??'').trim();\n  return /^\\d{17}$/.test(id)?id:null;\n}\n\nreturn oportunidades.map(r=>{\n  const idCompraOrigem=idCompraComprasGov(r);\n  const cnpj=r.orgaoEntidade?.cnpj??String(r.numeroControlePNCP??'').split('-')[0]??null;\n  const ano=r.anoCompra??String(r.numeroControlePNCP??'').match(/\\/(\\d{4})$/)?.[1]??null;\n  const seq=r.sequencialCompra??String(r.numeroControlePNCP??'').match(/-1-(\\d+)\\/\\d{4}$/)?.[1]??null;\n  const link=cnpj&&ano&&seq?`https://pncp.gov.br/app/editais/${cnpj}/${ano}/${Number(seq)}`:null;\n\n  return {json:{\n    tempoAnaliseSegundos,\n    tipoSaida:'oportunidade',\n    uasg:r.uasg??null,\n    numeroCompra:r.numeroCompra??null,\n    anoCompra:r.anoCompra??null,\n    tipoInstrumentoConvocatorioNome:r.tipoInstrumentoConvocatorioNome??null,\n    tipoInstrumentoConvocatorio:r.tipoInstrumentoConvocatorio??null,\n    tipoInstrumentoConvocatorioCodigo:r.tipoInstrumentoConvocatorioCodigo??null,\n    tipoInstrumentoConvocatorioId:r.tipoInstrumentoConvocatorioId??null,\n    idCompra:r.idCompra??null,\n    buscaExata:configBusca.modoBuscaCompra,\n    score:configBusca.modoBuscaCompra?null:(r.scoreRelevancia??0),\n    uf:r.unidadeOrgao?.ufSigla??r.ufConsulta??null,\n    municipio:r.unidadeOrgao?.municipioNome??null,\n    local:[r.unidadeOrgao?.municipioNome,r.unidadeOrgao?.ufSigla].filter(Boolean).join('/'),\n    orgao:r.orgaoEntidade?.razaoSocial??null,\n    unidadeCompradora:[r.unidadeOrgao?.codigoUnidade, r.unidadeOrgao?.nomeUnidade].filter(v=>v!==null&&v!==undefined&&String(v).trim()!=='').join(' - ')||null,\n    codigoModalidade:r.codigoModalidadeConsulta??null,\n    modalidadeIdPncp:r.modalidadeId??null,\n    modalidade:r.modalidadeNome??r.modalidadeConsulta??null,\n    valorNumerico:r.valorTotalEstimado??null,\n    valor:moeda(r.valorTotalEstimado),\n    modoDisputa:r.modoDisputaNome??null,\n    registroPreco:r.srp??null,\n    situacao:r.situacaoCompraNome??null,\n    objeto:r.objetoCompra??null,\n    dataPublicacao:r.dataPublicacaoPncp??null,\n    dataAberturaProposta:r.dataAberturaProposta??null,\n    dataEncerramentoProposta:r.dataEncerramentoProposta??null,\n    diasRestantes:r.diasRestantes??null,\n    palavrasChaveEncontradas:r.palavrasChaveEncontradas??[],\n    idContratacaoPNCP:r.numeroControlePNCP??null,\n    fonte:'Compras.gov.br',\n    portalConsulta:'PNCP',\n    fonteOriginal:r.usuarioNome??null,\n    linkContratacao:link,\n    linkSistemaOrigem:r.linkSistemaOrigem??null,\n    cadastroProposta:idCompraOrigem?`https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor/cadastro-propostas?compra=${encodeURIComponent(idCompraOrigem)}`:null,\n    diagnosticoGeral:diagnostico\n  }};\n});\n"
+      },
+      "id": "d290b841-149c-486f-a1c3-ff496c1a7cd4",
+      "name": "Preparar resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2176,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": "={{ $json.tipoErro === 'filtro_pesquisa_invalido' ? 400 : 200 }}"
+        }
+      },
+      "id": "331f2e36-d322-42b8-8896-936134a50bd4",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -1952,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "094f1f76-d2e0-4692-8f26-1ac793008221",
+      "name": "Processar páginas sequencialmente",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -3968,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-page1-cache",
+              "leftValue": "={{ $json.tipoItem }}",
+              "rightValue": "pagina1_cache",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "115a9c0e-1fcf-4e92-96f0-803dc1507de2",
+      "name": "Preparar item do loop",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3744,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const p=item.json.pagina1Filtrada;\n  if(p && typeof p === 'object') return {json:p};\n\n  return {json:{\n    uf:item.json.uf,\n    codigoModalidade:item.json.codigoModalidade,\n    modalidadeConsulta:item.json.modalidadeConsulta,\n    pagina:1,\n    totalPaginas:1,\n    erroApiPncp:null,\n    popupErro:null,\n    diagnostico:{paginas:0,recebidos:0,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,contratacoesComItensConsultados:0,requisicoesItens:0,aprovadosPelosItens:0,falhasConsultaItens:0,aprovados:0},\n    registros:[]\n  }};\n});"
+      },
+      "id": "457f0aea-3cbb-41e3-b637-2d415c367486",
+      "name": "Usar página 1 em cache",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3520,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://pncp.gov.br/api/consulta/v1/contratacoes/proposta",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({dataFinal:$json.dataFinal,codigoModalidadeContratacao:$json.codigoModalidade,tamanhoPagina:50,pagina:1,...($json.uasgConsulta ? {cnpj:$json.cnpj,codigoUnidadeAdministrativa:$json.uasgConsulta} : ($json.uf ? {uf:$json.uf} : {}))}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "2e0b1749-5054-4ae2-ae86-8726f237559e",
+      "name": "Consultar página",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4864,
+        752
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 15000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parse(v){\n  if(v?.error||v?.errorMessage){\n    const erro=v.error??v;\n    const detalhe=String(typeof erro==='string'?erro:erro.message??v.errorMessage??JSON.stringify(erro));\n    const status=Number(erro.statusCode??erro.httpCode??v.httpCode??0);\n    return {payload:{data:[],numeroPagina:1,totalPaginas:1},erro:{tipo:status===429||/429|limite de requisi/i.test(detalhe)?'limite_requisicoes_excedido':'erro_conexao_pncp',codigo:String(status||erro.code||'HTTP'),mensagem:detalhe}};\n  }\n\n  // Quando o HTTP Request esgota os retries com 'Continue', o n8n entrega o erro como item.\n  const msg = String(v?.error?.message ?? v?.errorMessage ?? v?.message ?? '');\n  const code = String(v?.error?.code ?? v?.httpCode ?? v?.code ?? '');\n  const textoErro = `${msg} ${code}`;\n  if (/ECONNRESET|connection to the server was closed unexpectedly|socket hang up/i.test(textoErro)) {\n    return {\n      payload:{data:[],numeroPagina:1,totalPaginas:1},\n      erro:{\n        tipo:'erro_conexao_pncp',\n        codigo:'ECONNRESET',\n        mensagem:'A conexão com o PNCP foi encerrada inesperadamente após as tentativas automáticas.'\n      }\n    };\n  }\n\n  let raw=v;\n  if(v&&typeof v==='object'&&!Array.isArray(v)){\n    if(typeof v.data==='string') raw=v.data;\n    else if(typeof v.body==='string') raw=v.body;\n  }\n  if(typeof raw==='string'){\n    if(/limite de requisi(?:ç|c)(?:õ|o)es excedido/i.test(raw)){\n      return {payload:{data:[],numeroPagina:1,totalPaginas:1},erro:{tipo:'limite_requisicoes_excedido',codigo:'RATE_LIMIT',mensagem:'O PNCP bloqueou a consulta por excesso de requisições. A pesquisa foi interrompida.',amostra:raw.slice(0,1000)}};\n    }\n    try{return {payload:JSON.parse(raw),erro:null};}\n    catch(e){return {payload:{data:[],numeroPagina:1,totalPaginas:1},erro:{tipo:'resposta_nao_json',mensagem:e.message,amostra:raw.slice(0,500)}};}\n  }\n  return {payload:(raw&&typeof raw==='object'?raw:{data:[],numeroPagina:1,totalPaginas:1}),erro:null};\n}\n\nconst entradas=$input.all();\nconst tarefas=$items('Preparar consultas PNCP');\nconst out=[];\n\nfor(let i=0;i<entradas.length;i++){\n  const tarefa=tarefas[i]?.json??{};\n  const p=parse(entradas[i].json);\n  out.push({json:{...tarefa,pagina:1,payload:p.payload,erroApiPncp:p.erro},pairedItem:{item:i}});\n}\nreturn out;"
+      },
+      "id": "bff9928b-34e7-4219-8148-b4b10fb90fb9",
+      "name": "Interpretar página",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4640,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nfunction obterUasg(r){\n  // A fonte Compras.gov.br é verificada antes de aplicar o filtro.\n  const unidade=String(r.unidadeOrgao?.codigoUnidade??r.unidadeOrgaoCodigoUnidade??'').trim();\n  if(/^\\d{6}$/.test(unidade))return unidade;\n  const id=String(r.idCompra??'').trim();\n  if(/^\\d{17}$/.test(id))return id.slice(0,6);\n  const origem=String(r.linkSistemaOrigem??'');\n  if(/^https?:\\/\\/cnetmobile\\.estaleiro\\.serpro\\.gov\\.br\\//i.test(origem)){\n    const compra=origem.match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1];\n    if(compra)return compra.slice(0,6);\n  }\n  return null;\n}\nfunction norm(v){\n  return String(v??'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')\n    .toLowerCase().replace(/[^\\p{L}\\p{N}\\s:/.-]+/gu,' ').replace(/\\s+/g,' ').trim();\n}\nfunction esc(v){return v.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&');}\nfunction tem(texto,termo){\n  const t=norm(termo); if(!t)return false;\n  return new RegExp(`(^|[^a-z0-9])${esc(t).replace(/\\s+/g,'\\\\s+')}([^a-z0-9]|$)`,'i').test(texto);\n}\nfunction dt(v){if(!v)return null;const d=new Date(v);return Number.isNaN(d.getTime())?null:d;}\n\n\nconst saida=[];\n\nfor(const item of $input.all()){\n  const x=item.json;\n  const payload=x.payload??{};\n  const config=x.config??{};\n  const registros=Array.isArray(payload.data)?payload.data:[];\n  const filtroUasgs=new Set(config.uasgs??[]);\n\n  const fortes=(config.termosFortes??[]).map(norm);\n  const contextuais=(config.termosContextuais??[]).map(norm);\n  const contextos=(config.contextosTecnologicos??[]).map(norm);\n  const exclusoes=(config.termosExclusao??[]).map(norm);\n\n  const agora=new Date();\n  const limite=new Date(agora);\n  limite.setDate(limite.getDate()+Number(config.prazo));\n\n  const diag={paginas:1,recebidos:registros.length,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,contratacoesComItensConsultados:0,requisicoesItens:0,aprovadosPelosItens:0,falhasConsultaItens:0,aprovados:0};\n  const aprovados=[];\n\n  for(const r of registros){\n    // Fonte da publicação no PNCP: aceitar somente Compras.gov.br.\n    // Fonte ausente também é rejeitada; links não substituem a identificação da fonte.\n    const fonte=String(r.usuarioNome??'').trim().toLowerCase();\n    if(fonte!=='compras.gov.br'){diag.fonteNaoPermitida++;continue;}\n    const uasg=obterUasg(r);\n    if(filtroUasgs.size && !filtroUasgs.has(uasg)){diag.uasgNaoPermitida++;continue;}\n    if(r.contratacaoExcluida===true){diag.excluidos++;continue;}\n\n    const situacao=norm(r.situacaoCompraNome??r.situacaoNome??r.situacao??'');\n    const bloqueados=['suspensa','suspenso','vencida','vencido','revogada','revogado','anulada','anulado','cancelada','cancelado','encerrada','encerrado','deserta','deserto','fracassada','fracassado'];\n    if(bloqueados.some(v=>situacao.includes(v))){diag.status++;continue;}\n\n    const fim=dt(r.dataEncerramentoProposta);\n    if(!fim||fim<=agora||fim>limite){diag.prazo++;continue;}\n\n\n    function avaliar(texto){\n      const tf=fortes.filter(t=>tem(texto,t));\n      const tc=contextuais.filter(t=>tem(texto,t));\n      const cx=contextos.filter(t=>tem(texto,t));\n      const ex=exclusoes.filter(t=>tem(texto,t));\n      let score=tf.length*Number(config.score?.termoForte??10);\n      if(tc.length&&cx.length)score+=Number(config.score?.termoContextualComContexto??5);\n      score+=ex.length*Number(config.score?.termoExclusao??-8);\n      return {score,palavras:[...new Set([...tf,...tc,...cx])]};\n    }\n    const texto=norm([r.objetoCompra,r.informacaoComplementar,r.justificativaPresencial].filter(Boolean).join(' '));\n    const avaliacaoObjeto=avaliar(texto);\n    let score=avaliacaoObjeto.score;\n    let palavras=avaliacaoObjeto.palavras;\n    let itensTICEncontrados=[];\n    let origemClassificacaoTIC='objeto';\n    if(score<Number(config.scoreMinimo??5)){diag.naoTIC++;diag.scoreInsuficiente++;continue;}\n\n    aprovados.push({...r,\n      uasg,\n      ufConsulta:item.json.uf,\n      codigoModalidadeConsulta:item.json.codigoModalidade,\n      modalidadeConsulta:item.json.modalidadeConsulta,\n      scoreRelevancia:score,\n      palavrasChaveEncontradas:palavras,\n      origemClassificacaoTIC,\n      itensTICEncontrados,\n      diasRestantes:Number(((fim-agora)/86400000).toFixed(2))\n    });\n    diag.aprovados++;\n  }\n\n  const erroApiPncp=item.json.erroApiPncp??null;\n  const popupErro=erroApiPncp\n    ? {\n        exibir:true,\n        tipo:erroApiPncp.tipo,\n        titulo:erroApiPncp.tipo==='erro_consulta_itens' ? 'Falha ao consultar itens do PNCP' : erroApiPncp.tipo==='limite_requisicoes_excedido' ? 'Limite de requisições excedido no PNCP' : erroApiPncp.tipo==='erro_conexao_pncp' ? 'Falha de conexão com o PNCP' : 'Erro na consulta ao PNCP',\n        mensagem:erroApiPncp.tipo==='erro_consulta_itens'\n          ? 'Não foi possível verificar os itens de uma contratação. A pesquisa foi interrompida para não apresentar um resultado incompleto como definitivo.'\n          : erroApiPncp.tipo==='limite_requisicoes_excedido'\n          ? 'O PNCP bloqueou a consulta por excesso de requisições. A pesquisa foi interrompida para não continuar enviando solicitações. Aguarde antes de tentar novamente.'\n          : erroApiPncp.tipo==='erro_conexao_pncp'\n          ? 'A conexão com o servidor do PNCP foi encerrada inesperadamente. As tentativas automáticas foram esgotadas. Aguarde alguns instantes e tente novamente.'\n          : 'O PNCP retornou uma resposta inválida ou não-JSON. Tente novamente em alguns instantes.',\n        detalhe:erroApiPncp.mensagem??null,\n        codigo:erroApiPncp.codigo??null,\n        amostra:erroApiPncp.amostra??null\n      }\n    : null;\n\n  saida.push({json:{\n    uf:item.json.uf,\n    codigoModalidade:item.json.codigoModalidade,\n    modalidadeConsulta:item.json.modalidadeConsulta,\n    pagina:Number(payload.numeroPagina??item.json.pagina??1),\n    totalPaginas:Number(payload.totalPaginas??1),\n    erroApiPncp,\n    popupErro,\n    diagnostico:diag,\n    config,\n    registros:aprovados\n  }});\n}\n\nreturn saida;"
+      },
+      "id": "6cd0b331-6c7d-4550-9442-e116ac6d0da1",
+      "name": "Filtrar página",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4416,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "71dcb158-2b40-4718-823b-9f000dd3dd86",
+              "leftValue": "={{ !$json.config.erroFiltroPesquisa }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "209b44af-b84e-4ee4-9075-b7d30220d5b6",
+      "name": "Filtro UASG válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6208,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{tipoSaida:'erro',encontrouOportunidades:false,popup:true,titulo:'Filtro de pesquisa inválido',mensagem:$json.config.erroFiltroPesquisa,tipoErro:'filtro_pesquisa_invalido'}}];"
+      },
+      "id": "d712a822-99ce-4e4d-b84a-340b5aebc44b",
+      "name": "Preparar erro UASG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5088,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "0acb1a75-3e62-48d6-86f2-18937008adde",
+      "name": "Intervalo entre páginas",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -3520,
+        560
+      ],
+      "webhookId": "8e2470ac-ad08-44d8-a5e4-6f6f6936ec2a"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d0fbbe56-d424-4301-9044-cdc2ec4fc012",
+              "leftValue": "={{ !!$json.erroApiPncp }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "162adc23-84a8-4e18-9f15-ed80bc40eb49",
+      "name": "Interromper após erro?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2624,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": "={{ $json.tipoErro === 'filtro_pesquisa_invalido' ? 400 : 200 }}"
+        }
+      },
+      "id": "f2b6d516-4aab-42d3-abea-d2912754b54b",
+      "name": "Responder parâmetros inválidos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -4864,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Modos de pesquisa\n**Busca exata (prioridade):** `uasg=250110&numeroCompra=00106/2026` ou `numeroCompra=25011005001062026`. Quando ambos sao informados, ignorar UF, prazo, termos, score, status e modalidade; obter diretamente pela API Dados Abertos Compras.gov.br. Para numero/ano sem modalidade, tenta codigos de modalidade 01 a 12, sem expor esse filtro. Se nao encontrar, devolve resumo sem oportunidades.\n\n**Busca geral:** UFs OU UASG; prazo e termos dinamicos obrigatorios. Filtros e classificacao TIC permanecem iguais.\n\nOBS: Numero de compra do sistema de origem e sequencial PNCP sao identificadores diferentes.",
+        "height": 400,
+        "width": 820
+      },
+      "id": "557ce73e-9a89-4467-bda8-b668efd5d28b",
+      "name": "Como usar a verificação complementar",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4560,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7224c039-4beb-4227-b49a-a0211c231b23",
+              "leftValue": "={{ $json.tipoItem === 'resolver_uasg' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "07fb8ee8-60ab-4e73-b27f-327e7d078090",
+      "name": "Resolver cadastro UASG?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5984,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "551eaa65-10d8-44ae-9aa4-1f53c5e53282",
+      "name": "Processar cadastros UASG",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -5760,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "id": "03761be8-c027-4324-9906-4c8970dcbd10",
+      "name": "Intervalo cadastro UASG",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -5536,
+        944
+      ],
+      "webhookId": "36ff5307-4012-4852-818f-1306c114aa35"
+    },
+    {
+      "parameters": {
+        "url": "https://dadosabertos.compras.gov.br/modulo-uasg/1_consultarUasg",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "codigoUasg",
+              "value": "={{ $json.uasgConsulta }}"
+            },
+            {
+              "name": "statusUasg",
+              "value": "true"
+            },
+            {
+              "name": "pagina",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "ace35208-65fc-4762-9662-d7738946de82",
+      "name": "Consultar cadastro UASG ativa",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5312,
+        944
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 15000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://dadosabertos.compras.gov.br/modulo-uasg/1_consultarUasg",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "codigoUasg",
+              "value": "={{ $json.uasgConsulta }}"
+            },
+            {
+              "name": "statusUasg",
+              "value": "false"
+            },
+            {
+              "name": "pagina",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "ed44790d-1fb9-4b8f-a88d-f8f2e161a8c6",
+      "name": "Consultar cadastro UASG inativa",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4640,
+        944
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 15000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst tarefa=$('Intervalo cadastro UASG').item.json;\nconst resposta=$json;\nlet registros=resposta.resultado??[];\nconst selecionados=registros.filter(r=>String(r.codigoUasg??'').padStart(6,'0')===tarefa.uasgConsulta);\nconst cnpjs=[...new Set(selecionados.map(r=>String(r.cnpjCpfOrgao??'').replace(/\\D/g,'')).filter(v=>/^\\d{14}$/.test(v)))];\nconst erro=resposta.error?String(resposta.error.message??resposta.error):null;\nreturn [{json:{...tarefa,cnpj:cnpjs.length===1?cnpjs[0]:null,consultarInativa:true&&!erro&&cnpjs.length!==1,erroCadastro:erro??(cnpjs.length!==1&&!true?'Não foi possível identificar o CNPJ do órgão para a UASG '+tarefa.uasgConsulta:null)}}];\n"
+      },
+      "id": "b26b5ccb-42eb-4239-8ad5-a7f165540978",
+      "name": "Interpretar cadastro ativo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5088,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c4ff0ff7-e6b4-463d-9978-22cb40c306ed",
+              "leftValue": "={{ $json.consultarInativa }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f5a14ec6-d156-479a-81e9-ed38feba2379",
+      "name": "Consultar cadastro inativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4864,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst tarefa=$('Interpretar cadastro ativo').item.json;\nconst resposta=$json;\nlet registros=resposta.resultado??[];\nconst selecionados=registros.filter(r=>String(r.codigoUasg??'').padStart(6,'0')===tarefa.uasgConsulta);\nconst cnpjs=[...new Set(selecionados.map(r=>String(r.cnpjCpfOrgao??'').replace(/\\D/g,'')).filter(v=>/^\\d{14}$/.test(v)))];\nconst erro=resposta.error?String(resposta.error.message??resposta.error):null;\nreturn [{json:{...tarefa,cnpj:cnpjs.length===1?cnpjs[0]:null,consultarInativa:false&&!erro&&cnpjs.length!==1,erroCadastro:erro??(cnpjs.length!==1&&!false?'Não foi possível identificar o CNPJ do órgão para a UASG '+tarefa.uasgConsulta:null)}}];\n"
+      },
+      "id": "3281f10d-1539-4d36-a482-8c260d2d35aa",
+      "name": "Interpretar cadastro inativo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4416,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const entradas=$input.all();\nconst erro=entradas.find(i=>i.json.erroCadastro||!i.json.cnpj);\nif(erro)return [{json:{config:{...erro.json.config,erroFiltroPesquisa:erro.json.erroCadastro??'Cadastro UASG inválido'}}}];\nreturn entradas.flatMap(i=>(i.json.modalidades??[]).map(m=>({json:{config:i.json.config,dataFinal:i.json.dataFinal,cnpj:i.json.cnpj,uasgConsulta:i.json.uasgConsulta,uf:null,...m}})));\n"
+      },
+      "id": "17898dc8-332a-467f-a8bb-97806e2f0547",
+      "name": "Preparar pesquisas por UASG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5536,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "71dcb158-2b40-4718-823b-9f000dd3dd86",
+              "leftValue": "={{ !$json.config.erroFiltroPesquisa }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ce7504d9-3c68-4169-9bd2-607a5017b7ff",
+      "name": "Cadastro UASG válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5312,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "1b85ae11-4509-4fa1-aefe-aea00640938f",
+      "name": "Preparar consultas PNCP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5088,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8f4d8844-1664-48ce-97a2-a82a6db26bb6",
+              "leftValue": "={{ $json.tipoItem === \"buscar_compra_exata\" }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "707efca0-c317-4ca6-b8ac-568fb077388e",
+      "name": "Busca específica por compra?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6080,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json;\nreturn [{json:{uasg:r.config.uasgs[0],config:r.config}}];"
+      },
+      "id": "efd12f1d-825a-4a86-880d-97c2b9ac8471",
+      "name": "Preparar lookup UASG fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5168,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://dadosabertos.compras.gov.br/modulo-uasg/1_consultarUasg",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "codigoUasg",
+              "value": "={{ $json.uasg }}"
+            },
+            {
+              "name": "statusUasg",
+              "value": "true"
+            },
+            {
+              "name": "pagina",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "2c75200b-377f-46de-9829-72a8090e762b",
+      "name": "Consultar UASG para fallback PNCP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4944,
+        544
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resposta=$input.first().json;\nconst base=$items('Preparar lookup UASG fallback',0)[0].json;\nconst registros=resposta.resultado??[];\nconst encontrados=registros.filter(r=>String(r.codigoUasg??'').padStart(6,'0')===base.uasg);\nconst cnpjs=[...new Set(encontrados.map(r=>String(r.cnpjCpfOrgao??'').replace(/\\D/g,'')).filter(v=>/^\\d{14}$/.test(v)))];\nif(cnpjs.length!==1)return [{json:{config:base.config,fallbackError:resposta.error?.message??('Não foi possível identificar o CNPJ do órgão para a UASG '+base.uasg+'.')}}];\nconst match=String(base.config.numeroCompra??'').match(/^(\\d{1,5})\\s*\\/\\s*(20\\d{2})$/);\nconst id=String(base.config.numeroCompra??'');\nconst numero=match?String(Number(match[1])):(/^\\d{17}$/.test(id)?String(Number(id.slice(8,13))):'');\nconst ano=match?match[2]:(/^\\d{17}$/.test(id)?id.slice(-4):'');\nif(!numero||!ano)return [{json:{config:base.config,fallbackError:'Não foi possível interpretar o número e o ano da compra para consultar o PNCP.'}}];\nconst fimAno=new Date(Number(ano),11,31);\nconst inicioAno=new Date(Number(ano),0,1);\nconst anoFuturo=inicioAno.getTime()>Date.now();\nconst fimBusca=anoFuturo?fimAno:new Date(Math.min(Date.now(),fimAno.getTime()));\nconst inicioBusca=new Date(fimBusca);\ninicioBusca.setDate(inicioBusca.getDate()-30);\nconst inicioBuscaMs=anoFuturo?inicioAno.getTime():Math.max(inicioBusca.getTime(),inicioAno.getTime());\nconst formatarData=d=>`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;\nreturn [8].map(codigoModalidadeContratacao=>({json:{config:base.config,uasg:base.uasg,cnpj:cnpjs[0],numero,ano,codigoModalidadeContratacao,dataInicial:formatarData(new Date(inicioBuscaMs)),dataFinal:formatarData(fimBusca)}}));"
+      },
+      "id": "a638ce46-a13f-4f53-b91c-72062667f78b",
+      "name": "Preparar consultas PNCP fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4720,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "86f55055-b46d-4c47-9f2b-28b90ec7d769",
+              "leftValue": "={{ !$json.fallbackError }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "381d59c1-dbd4-468e-9415-84213d88fd36",
+      "name": "CNPJ localizado para fallback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4496,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({cnpj:$json.cnpj,codigoUnidadeAdministrativa:$json.uasg,codigoModalidadeContratacao:$json.codigoModalidadeContratacao,dataInicial:$json.dataInicial,dataFinal:$json.dataFinal,pagina:1,tamanhoPagina:50}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "15254245-5df2-4fa1-bb7f-dc1e8b2f0134",
+      "name": "Consultar PNCP fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4272,
+        416
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entradas=$input.all();\nconst consultas=$items('Preparar consultas PNCP fallback',0);\nconst config=consultas[0]?.json?.config??$('Configurar pesquisa').first().json.config;\nconst registros=[];\nconst erros=[];\nlet paginasNaoConsultadas=0;\nconst alvo=String(config.numeroCompra??'');\nconst match=alvo.match(/^(\\d{1,5})\\s*\\/\\s*(20\\d{2})$/);\nconst id=/^\\d{17}$/.test(alvo)?alvo:null;\nconst numero=match?String(Number(match[1])):(id?String(Number(id.slice(8,13))):'');\nconst ano=match?match[2]:(id?id.slice(-4):'');\nfunction parse(v){\n if(v?.error||v?.errorMessage){const e=v.error??v;return {error:String(e.message??v.errorMessage??'Falha na consulta PNCP')};}\n let raw=v;if(v&&typeof v==='object'&&typeof v.body==='string')raw=v.body;\n if(typeof raw==='string'){try{raw=JSON.parse(raw);}catch(e){return {error:'Resposta PNCP não JSON: '+e.message};}}\n return {payload:raw};\n}\nfor(let i=0;i<entradas.length;i++){\n const r=parse(entradas[i].json);\n if(r.error){erros.push(r.error);continue;}\n const p=r.payload??{};\n if(Number(p.totalPaginas??1)>1)paginasNaoConsultadas+=Number(p.totalPaginas)-1;\n for(const compra of (Array.isArray(p.data)?p.data:[])){\n  const unidade=String(compra.unidadeOrgao?.codigoUnidade??compra.unidadeOrgaoCodigoUnidade??'').padStart(6,'0');\n  if(String(compra.numeroCompra??'').replace(/^0+(?=\\d)/,'')!==numero||String(compra.anoCompra??'')!==ano||unidade!==config.uasgs[0])continue;\n  const controle=String(compra.numeroControlePNCP??'');\n  if(registros.some(x=>x.numeroControlePNCP===controle))continue;\n  const idOrigem=String(compra.idCompra??'').trim()||String(compra.linkSistemaOrigem??'').match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1]||'';\n  if(id&&idOrigem&&idOrigem!==id)continue;\n  const fim=compra.dataEncerramentoPropostaPncp??compra.dataEncerramentoProposta??null;\n  const fimMs=fim?new Date(fim).getTime():NaN;\n  registros.push({...compra,uasg:config.uasgs[0],orgaoEntidade:compra.orgaoEntidade??null,unidadeOrgao:compra.unidadeOrgao??{codigoUnidade:unidade},numeroCompra:compra.numeroCompra??numero,anoCompra:compra.anoCompra??Number(ano),modalidadeId:compra.modalidadeId??null,situacaoCompraNome:compra.situacaoCompraNome??null,modoDisputaNome:compra.modoDisputaNome??null,dataAberturaProposta:compra.dataAberturaProposta??null,dataEncerramentoProposta:fim,codigoModalidadeConsulta:compra.modalidadeId??null,modalidadeConsulta:compra.modalidadeNome??null,usuarioNome:compra.usuarioNome??'Compras.gov.br',scoreRelevancia:null,palavrasChaveEncontradas:[],origemClassificacaoTIC:'nao_aplicada_busca_exata',itensTICEncontrados:[],diasRestantes:Number.isFinite(fimMs)?Number(((fimMs-Date.now())/86400000).toFixed(2)):null});\n }\n}\nconst fallbackMessage=entradas[0]?.json?.fallbackError;\nconst fallbackError=fallbackMessage?[fallbackMessage]:[];\nif(erros.length)fallbackError.push(...erros.slice(0,5));\nconst buscaIncompleta=!registros.length&&(fallbackError.length>0||paginasNaoConsultadas>0);\nconst popupErro=buscaIncompleta?{exibir:true,tipo:'consulta_exata_incompleta',titulo:'Consulta exata incompleta',mensagem:fallbackError.length?'A consulta complementar ao PNCP falhou. O resultado pode estar incompleto.':`O PNCP informou ${paginasNaoConsultadas} páginas adicionais; a busca complementar pode estar incompleta.`,detalhe:fallbackError.slice(0,5)}:null;\nreturn [{json:{config,diagnostico:{paginas:entradas.length,recebidos:registros.length,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,aprovados:registros.length,consultasSemDados:entradas.length-registros.length,errosConsulta:erros.length,paginasNaoConsultadas},registros,popupErro}}];"
+      },
+      "id": "82b3bba8-c087-4867-b5c2-29cb3f0f6fdb",
+      "name": "Interpretar busca exata PNCP fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4048,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ffd6ceba-6ad1-4706-8617-d7ef7026104e",
+              "leftValue": "={{ $json.registros.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "09406a2d-6db6-46d9-8069-3ba74bb4f9cd",
+      "name": "Compra localizada na janela recente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3824,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$items('Preparar lookup UASG fallback',0)[0].json;\nconst dados=$items('Preparar consultas PNCP fallback',0);\nconst cnpj=dados[0]?.json?.cnpj;\nconst ano=String(base.config.numeroCompra??'').match(/\\/(20\\d{2})$/)?.[1]??String(base.config.numeroCompra??'').match(/(20\\d{2})$/)?.[1]??'';\nif(!cnpj||!/^\\d{4}$/.test(ano))return [{json:{config:base.config,fallbackError:'Não foi possível preparar a consulta anual ao PNCP.'}}];\nreturn [8,6,7].map(codigoModalidadeContratacao=>({json:{config:base.config,uasg:base.uasg,cnpj,numero:base.config.numeroCompra,ano,codigoModalidadeContratacao,dataInicial:ano+'0101',dataFinal:ano+'1231'}}));"
+      },
+      "id": "04145e32-5b72-482f-a7ed-3db6badf062b",
+      "name": "Preparar consulta anual PNCP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3600,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({cnpj:$json.cnpj,codigoUnidadeAdministrativa:$json.uasg,codigoModalidadeContratacao:$json.codigoModalidadeContratacao,dataInicial:$json.dataInicial,dataFinal:$json.dataFinal,pagina:1,tamanhoPagina:50}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "68954060-0093-4b50-871c-103da3e403e4",
+      "name": "Consultar PNCP ano completo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3376,
+        640
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entradas=$input.all();\nconst config=$('Configurar pesquisa').first().json.config;\nconst registros=[];\nconst erros=[];\nlet paginasNaoConsultadas=0;\nconst alvo=String(config.numeroCompra??'');\nconst match=alvo.match(/^(\\d{1,5})\\s*\\/\\s*(20\\d{2})$/);\nconst id=/^\\d{17}$/.test(alvo)?alvo:null;\nconst numero=match?String(Number(match[1])):(id?String(Number(id.slice(8,13))):'');\nconst ano=match?match[2]:(id?id.slice(-4):'');\nfunction parse(v){\n if(v?.error||v?.errorMessage){const e=v.error??v;return {error:String(e.message??v.errorMessage??'Falha na consulta PNCP')};}\n let raw=v;if(v&&typeof v==='object'&&typeof v.body==='string')raw=v.body;\n if(typeof raw==='string'){try{raw=JSON.parse(raw);}catch(e){return {error:'Resposta PNCP não JSON: '+e.message};}}\n return {payload:raw};\n}\nfor(let i=0;i<entradas.length;i++){\n const r=parse(entradas[i].json);\n if(r.error){erros.push(r.error);continue;}\n const p=r.payload??{};\n if(Number(p.totalPaginas??1)>1)paginasNaoConsultadas+=Number(p.totalPaginas)-1;\n for(const compra of (Array.isArray(p.data)?p.data:[])){\n  const unidade=String(compra.unidadeOrgao?.codigoUnidade??compra.unidadeOrgaoCodigoUnidade??'').padStart(6,'0');\n  if(String(compra.numeroCompra??'').replace(/^0+(?=\\d)/,'')!==numero||String(compra.anoCompra??'')!==ano||unidade!==config.uasgs[0])continue;\n  const controle=String(compra.numeroControlePNCP??'');\n  if(registros.some(x=>x.numeroControlePNCP===controle))continue;\n  const idOrigem=String(compra.idCompra??'').trim()||String(compra.linkSistemaOrigem??'').match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1]||'';\n  if(id&&idOrigem&&idOrigem!==id)continue;\n  const fim=compra.dataEncerramentoPropostaPncp??compra.dataEncerramentoProposta??null;\n  const fimMs=fim?new Date(fim).getTime():NaN;\n  registros.push({...compra,uasg:config.uasgs[0],orgaoEntidade:compra.orgaoEntidade??null,unidadeOrgao:compra.unidadeOrgao??{codigoUnidade:unidade},numeroCompra:compra.numeroCompra??numero,anoCompra:compra.anoCompra??Number(ano),modalidadeId:compra.modalidadeId??null,situacaoCompraNome:compra.situacaoCompraNome??null,modoDisputaNome:compra.modoDisputaNome??null,dataAberturaProposta:compra.dataAberturaProposta??null,dataEncerramentoProposta:fim,codigoModalidadeConsulta:compra.modalidadeId??null,modalidadeConsulta:compra.modalidadeNome??null,usuarioNome:compra.usuarioNome??'Compras.gov.br',scoreRelevancia:null,palavrasChaveEncontradas:[],origemClassificacaoTIC:'nao_aplicada_busca_exata',itensTICEncontrados:[],diasRestantes:Number.isFinite(fimMs)?Number(((fimMs-Date.now())/86400000).toFixed(2)):null});\n }\n}\nconst fallbackMessage=entradas[0]?.json?.fallbackError;\nconst fallbackError=fallbackMessage?[fallbackMessage]:[];\nif(erros.length)fallbackError.push(...erros.slice(0,5));\nconst buscaIncompleta=!registros.length&&(fallbackError.length>0||paginasNaoConsultadas>0);\nconst popupErro=buscaIncompleta?{exibir:true,tipo:'consulta_exata_incompleta',titulo:'Consulta exata incompleta',mensagem:fallbackError.length?'A consulta complementar ao PNCP falhou. O resultado pode estar incompleto.':`O PNCP informou ${paginasNaoConsultadas} páginas adicionais; a busca complementar pode estar incompleta.`,detalhe:fallbackError.slice(0,5)}:null;\nreturn [{json:{config,diagnostico:{paginas:entradas.length,recebidos:registros.length,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,aprovados:registros.length,consultasSemDados:entradas.length-registros.length,errosConsulta:erros.length,paginasNaoConsultadas},registros,popupErro}}];"
+      },
+      "id": "6f798655-5fbf-40a5-97fc-5943fbf2d77a",
+      "name": "Interpretar resultado anual PNCP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3152,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json;\nreturn [{json:{config:r.config,diagnostico:{paginas:0,recebidos:0,aprovados:0,errosConsulta:1},registros:[],popupErro:{exibir:true,tipo:'consulta_exata_incompleta',titulo:'Consulta exata incompleta',mensagem:r.fallbackError??'Não foi possível consultar o cadastro da UASG para pesquisar no PNCP.'}}}];"
+      },
+      "id": "87f1b470-cc18-47f2-9e29-99303b636b76",
+      "name": "Interpretar erro cadastro UASG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4272,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base=$items('Preparar consultas PNCP fallback',0)[0].json;\nreturn [6,7].map(codigoModalidadeContratacao=>({json:{...base,codigoModalidadeContratacao}}));"
+      },
+      "id": "7a73c692-b551-4b0d-a029-448437f2ced7",
+      "name": "Preparar outras modalidades PNCP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3600,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={{ JSON.stringify({cnpj:$json.cnpj,codigoUnidadeAdministrativa:$json.uasg,codigoModalidadeContratacao:$json.codigoModalidadeContratacao,dataInicial:$json.dataInicial,dataFinal:$json.dataFinal,pagina:1,tamanhoPagina:50}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "e8218b2f-c2cc-4417-ade4-278b54e591c9",
+      "name": "Consultar outras modalidades PNCP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3600,
+        800
+      ],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entradas=$input.all();\nconst consultas=$items('Preparar consultas PNCP fallback',0);\nconst config=consultas[0]?.json?.config??$('Configurar pesquisa').first().json.config;\nconst registros=[];\nconst erros=[];\nlet paginasNaoConsultadas=0;\nconst alvo=String(config.numeroCompra??'');\nconst match=alvo.match(/^(\\d{1,5})\\s*\\/\\s*(20\\d{2})$/);\nconst id=/^\\d{17}$/.test(alvo)?alvo:null;\nconst numero=match?String(Number(match[1])):(id?String(Number(id.slice(8,13))):'');\nconst ano=match?match[2]:(id?id.slice(-4):'');\nfunction parse(v){\n if(v?.error||v?.errorMessage){const e=v.error??v;return {error:String(e.message??v.errorMessage??'Falha na consulta PNCP')};}\n let raw=v;if(v&&typeof v==='object'&&typeof v.body==='string')raw=v.body;\n if(typeof raw==='string'){try{raw=JSON.parse(raw);}catch(e){return {error:'Resposta PNCP não JSON: '+e.message};}}\n return {payload:raw};\n}\nfor(let i=0;i<entradas.length;i++){\n const r=parse(entradas[i].json);\n if(r.error){erros.push(r.error);continue;}\n const p=r.payload??{};\n if(Number(p.totalPaginas??1)>1)paginasNaoConsultadas+=Number(p.totalPaginas)-1;\n for(const compra of (Array.isArray(p.data)?p.data:[])){\n  const unidade=String(compra.unidadeOrgao?.codigoUnidade??compra.unidadeOrgaoCodigoUnidade??'').padStart(6,'0');\n  if(String(compra.numeroCompra??'').replace(/^0+(?=\\d)/,'')!==numero||String(compra.anoCompra??'')!==ano||unidade!==config.uasgs[0])continue;\n  const controle=String(compra.numeroControlePNCP??'');\n  if(registros.some(x=>x.numeroControlePNCP===controle))continue;\n  const idOrigem=String(compra.idCompra??'').trim()||String(compra.linkSistemaOrigem??'').match(/[?&](?:amp;)?compra=(\\d{17})(?!\\d)/i)?.[1]||'';\n  if(id&&idOrigem&&idOrigem!==id)continue;\n  const fim=compra.dataEncerramentoPropostaPncp??compra.dataEncerramentoProposta??null;\n  const fimMs=fim?new Date(fim).getTime():NaN;\n  registros.push({...compra,uasg:config.uasgs[0],orgaoEntidade:compra.orgaoEntidade??null,unidadeOrgao:compra.unidadeOrgao??{codigoUnidade:unidade},numeroCompra:compra.numeroCompra??numero,anoCompra:compra.anoCompra??Number(ano),modalidadeId:compra.modalidadeId??null,situacaoCompraNome:compra.situacaoCompraNome??null,modoDisputaNome:compra.modoDisputaNome??null,dataAberturaProposta:compra.dataAberturaProposta??null,dataEncerramentoProposta:fim,codigoModalidadeConsulta:compra.modalidadeId??null,modalidadeConsulta:compra.modalidadeNome??null,usuarioNome:compra.usuarioNome??'Compras.gov.br',scoreRelevancia:null,palavrasChaveEncontradas:[],origemClassificacaoTIC:'nao_aplicada_busca_exata',itensTICEncontrados:[],diasRestantes:Number.isFinite(fimMs)?Number(((fimMs-Date.now())/86400000).toFixed(2)):null});\n }\n}\nconst fallbackMessage=entradas[0]?.json?.fallbackError;\nconst fallbackError=fallbackMessage?[fallbackMessage]:[];\nif(erros.length)fallbackError.push(...erros.slice(0,5));\nconst buscaIncompleta=!registros.length&&(fallbackError.length>0||paginasNaoConsultadas>0);\nconst popupErro=buscaIncompleta?{exibir:true,tipo:'consulta_exata_incompleta',titulo:'Consulta exata incompleta',mensagem:fallbackError.length?'A consulta complementar ao PNCP falhou. O resultado pode estar incompleto.':`O PNCP informou ${paginasNaoConsultadas} páginas adicionais; a busca complementar pode estar incompleta.`,detalhe:fallbackError.slice(0,5)}:null;\nreturn [{json:{config,diagnostico:{paginas:entradas.length,recebidos:registros.length,naoTIC:0,scoreInsuficiente:0,prazo:0,status:0,fonteNaoPermitida:0,excluidos:0,uasgNaoPermitida:0,aprovados:registros.length,consultasSemDados:entradas.length-registros.length,errosConsulta:erros.length,paginasNaoConsultadas},registros,popupErro}}];"
+      },
+      "id": "ef3e498e-d075-4e7c-b986-b6afc4dc9c7b",
+      "name": "Interpretar outras modalidades PNCP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3376,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fd331cf9-8ad2-473b-908a-8dc43b8ae04b",
+              "leftValue": "={{ $json.registros.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "be8bb506-2c9e-41ca-909c-3b38cc84bf12",
+      "name": "Compra localizada nas outras modalidades?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3152,
+        800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Configurar pesquisa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configurar pesquisa": {
+      "main": [
+        [
+          {
+            "node": "Filtro UASG válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar páginas restantes": {
+      "main": [
+        [
+          {
+            "node": "Processar páginas sequencialmente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar páginas restantes": {
+      "main": [
+        [
+          {
+            "node": "Interpretar páginas restantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar páginas restantes": {
+      "main": [
+        [
+          {
+            "node": "Filtrar páginas restantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar páginas restantes": {
+      "main": [
+        [
+          {
+            "node": "Interromper após erro?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar e deduplicar": {
+      "main": [
+        [
+          {
+            "node": "Preparar resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar resultado": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar páginas sequencialmente": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar item do loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar item do loop": {
+      "main": [
+        [
+          {
+            "node": "Usar página 1 em cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Intervalo entre páginas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usar página 1 em cache": {
+      "main": [
+        [
+          {
+            "node": "Processar páginas sequencialmente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar página": {
+      "main": [
+        [
+          {
+            "node": "Interpretar página",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar página": {
+      "main": [
+        [
+          {
+            "node": "Filtrar página",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar página": {
+      "main": [
+        [
+          {
+            "node": "Gerar páginas restantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtro UASG válido?": {
+      "main": [
+        [
+          {
+            "node": "Busca específica por compra?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar erro UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar erro UASG": {
+      "main": [
+        [
+          {
+            "node": "Responder parâmetros inválidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intervalo entre páginas": {
+      "main": [
+        [
+          {
+            "node": "Consultar páginas restantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interromper após erro?": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processar páginas sequencialmente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolver cadastro UASG?": {
+      "main": [
+        [
+          {
+            "node": "Processar cadastros UASG",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar consultas PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar cadastros UASG": {
+      "main": [
+        [
+          {
+            "node": "Preparar pesquisas por UASG",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Intervalo cadastro UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intervalo cadastro UASG": {
+      "main": [
+        [
+          {
+            "node": "Consultar cadastro UASG ativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar cadastro UASG ativa": {
+      "main": [
+        [
+          {
+            "node": "Interpretar cadastro ativo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar cadastro ativo": {
+      "main": [
+        [
+          {
+            "node": "Consultar cadastro inativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar cadastro inativo?": {
+      "main": [
+        [
+          {
+            "node": "Consultar cadastro UASG inativa",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processar cadastros UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar cadastro UASG inativa": {
+      "main": [
+        [
+          {
+            "node": "Interpretar cadastro inativo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar cadastro inativo": {
+      "main": [
+        [
+          {
+            "node": "Processar cadastros UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar pesquisas por UASG": {
+      "main": [
+        [
+          {
+            "node": "Cadastro UASG válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cadastro UASG válido?": {
+      "main": [
+        [
+          {
+            "node": "Preparar consultas PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar erro UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar consultas PNCP": {
+      "main": [
+        [
+          {
+            "node": "Consultar página",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busca específica por compra?": {
+      "main": [
+        [
+          {
+            "node": "Preparar lookup UASG fallback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolver cadastro UASG?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar lookup UASG fallback": {
+      "main": [
+        [
+          {
+            "node": "Consultar UASG para fallback PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar UASG para fallback PNCP": {
+      "main": [
+        [
+          {
+            "node": "Preparar consultas PNCP fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar consultas PNCP fallback": {
+      "main": [
+        [
+          {
+            "node": "CNPJ localizado para fallback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CNPJ localizado para fallback?": {
+      "main": [
+        [
+          {
+            "node": "Consultar PNCP fallback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Interpretar erro cadastro UASG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar PNCP fallback": {
+      "main": [
+        [
+          {
+            "node": "Interpretar busca exata PNCP fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar busca exata PNCP fallback": {
+      "main": [
+        [
+          {
+            "node": "Compra localizada na janela recente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar erro cadastro UASG": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compra localizada na janela recente?": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar outras modalidades PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar consulta anual PNCP": {
+      "main": [
+        [
+          {
+            "node": "Consultar PNCP ano completo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar PNCP ano completo": {
+      "main": [
+        [
+          {
+            "node": "Interpretar resultado anual PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar resultado anual PNCP": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar outras modalidades PNCP": {
+      "main": [
+        [
+          {
+            "node": "Consultar outras modalidades PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar outras modalidades PNCP": {
+      "main": [
+        [
+          {
+            "node": "Interpretar outras modalidades PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar outras modalidades PNCP": {
+      "main": [
+        [
+          {
+            "node": "Compra localizada nas outras modalidades?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compra localizada nas outras modalidades?": {
+      "main": [
+        [
+          {
+            "node": "Consolidar e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar consulta anual PNCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "2b2ea866-8080-47f2-a51b-d5e9cde5a1c3",
+  "meta": {
+    "instanceId": "af897f36ee10ed5cd90e08eb4d022a96dc316611a3d69743dd73be5f2f4df1cd"
+  },
+  "nodeGroups": [],
+  "id": "zNw4O6EJJGfc396J",
+  "tags": []
+}

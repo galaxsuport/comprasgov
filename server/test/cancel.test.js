@@ -45,15 +45,15 @@ test('cancels during startup, clears all proposal history and preserves it on up
   });
   const insert = (owner, id) => db.prepare(`INSERT INTO analysis_jobs
     (owner,job_id,proposal_key,proposal_json,status,report_html,consult_path,report_path,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(owner, id, 'id:fixture', '{}', 'processando', 'old data', '/status', '/report', 1, 1);
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(owner, id, 'id:40176679000199-1-1/2027', '{}', 'processando', 'old data', '/status', '/report', 1, 1);
   try {
     const starting = fetch(`${base}/api/analysis`, {
       method: 'POST', headers, body: JSON.stringify({
-        proposal: { tipoSaida: 'oportunidade', idContratacaoPNCP: 'fixture', uasg: '985825', numeroCompra: '1/2027' }
+        proposal: { tipoSaida: 'oportunidade', idContratacaoPNCP: '40176679000199-1-1/2027', uasg: '985825', numeroCompra: '1/2027' }
       })
     });
     await received;
-    const cancellation = cancel('id:fixture');
+    const cancellation = cancel('id:40176679000199-1-1/2027');
     await new Promise(resolve => setTimeout(resolve, 20));
     releaseStart();
     assert.equal((await starting).status, 409);
@@ -63,15 +63,15 @@ test('cancels during startup, clears all proposal history and preserves it on up
     insert('homologacao', 'old1');
     insert('homologacao', 'old2');
     insert('another', 'other');
-    assert.equal((await cancel('id:fixture', { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.equal((await cancel('id:40176679000199-1-1/2027', { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
     assert.equal((await cancel('')).status, 400);
     failure = true;
-    assert.equal((await cancel('id:fixture')).status, 502);
+    assert.equal((await cancel('id:40176679000199-1-1/2027')).status, 502);
     assert.equal(db.prepare('SELECT count(*) AS n FROM analysis_jobs').get().n, 3);
     failure = false;
-    assert.equal((await cancel('id:fixture')).status, 200);
+    assert.equal((await cancel('id:40176679000199-1-1/2027')).status, 200);
     assert.deepEqual(db.prepare('SELECT job_id FROM analysis_jobs').all(), [{ job_id: 'other' }]);
-    assert.equal((await cancel('id:fixture')).status, 404);
+    assert.equal((await cancel('id:40176679000199-1-1/2027')).status, 404);
   } finally {
     releaseStart();
     await new Promise(resolve => api.close(resolve));

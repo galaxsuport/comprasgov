@@ -120,7 +120,12 @@ Com `APP_ENV=homologacao` no ambiente do servidor, o app dispensa a tela de logi
 
 ### Análise no card do edital
 
-O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n e passa a oferecer **Cancelar análise**, inclusive enquanto o protocolo está sendo criado. Durante o cancelamento, fica desabilitado como **Cancelando...**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "UASG", "numeroCompra" }` com o cabeçalho `X-Workflow-Key`.
+O cabeçalho do card exibe o tipo de instrumento antes do número/ano da compra.
+Além dos nomes recebidos, reconhece os códigos do catálogo PNCP: 1 (Edital),
+2 (Aviso de Contratação Direta), 3 (Ato que autoriza a Contratação Direta),
+4 (Edital de Chamamento Público) e 5 (Não se Aplica, inativo no catálogo).
+
+O botão **Analisar**, com lupa, inicia imediatamente o fluxo n8n e passa a oferecer **Cancelar análise**, inclusive enquanto o protocolo está sendo criado. Durante o cancelamento, fica desabilitado como **Cancelando...**. Configure `ANALYSIS_WEBHOOK_URL` e `ANALYSIS_WORKFLOW_KEY` somente no ambiente privado da API. O servidor envia `{ "idContratacaoPNCP" }` (Id contratação PNCP) com o cabeçalho `X-Workflow-Key`.
 
 O webhook irmão `pncp-cancelar` recebe `{ "job_id" }` com a mesma autenticação e cancela o processamento externo e o job do extrator. Somente após confirmação externa a API exclui todos os jobs/relatórios da proposta e o card volta a **Analisar**. Se o cancelamento falhar, os registros locais permanecem e o erro é exibido.
 

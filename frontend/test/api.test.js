@@ -27,6 +27,12 @@ test('forwards purchase number with UASG or region search filters', async () => 
 
     await api.fetchResultados({ numeroCompra: '789/2026' });
     assert.equal(requestedUrl.searchParams.get('numeroCompra'), '789/2026');
+
+    await api.fetchResultados({ uasg: '153162', numeroCompra: '592026' });
+    assert.equal(requestedUrl.searchParams.get('numeroCompra'), '59/2026');
+
+    await api.fetchResultados({ numeroCompra: ' 59 / 2026 ' });
+    assert.equal(requestedUrl.searchParams.get('numeroCompra'), '59/2026');
   } finally {
     globalThis.fetch = original;
   }
@@ -72,7 +78,7 @@ test('shows actionable 502 errors and preserves upstream diagnostic messages', a
   }
 });
 
-test('cancellation stays distinguishable from a timeout and analysis parameters use existing purchase links', async () => {
+test('cancellation stays distinguishable from a timeout and analysis parameters use the PNCP contract ID', async () => {
   const original = globalThis.fetch;
   try {
     globalThis.fetch = async () => { throw new DOMException('Aborted', 'AbortError'); };
@@ -80,14 +86,16 @@ test('cancellation stays distinguishable from a timeout and analysis parameters 
     controller.abort();
     await assert.rejects(api.fetchResultados({}, controller.signal), error => error.name === 'AbortError');
     await assert.rejects(api.fetchResultados(), /Tempo limite excedido/);
-    assert.deepEqual(api.getAnalysisParams({ cadastroProposta: 'https://compras.gov.br?compra=98582505003262027' }),
-      { uasg: '985825', numeroCompra: '326/2027' });
+    assert.deepEqual(api.getAnalysisParams({ idContratacaoPNCP: '40176679000199-1-000042/2026' }),
+      { idContratacaoPNCP: '40176679000199-1-000042/2026' });
     assert.deepEqual(api.getAnalysisParams({
-      uasg: '928552',
-      numeroCompra: '1',
-      cadastroProposta: 'https://compras.gov.br?compra=92855205000012026'
-    }), { uasg: '928552', numeroCompra: '1/2026' });
-    assert.equal(api.getAnalysisParams({ uasg: 'bad', numeroCompra: '326/2027' }), null);
+      linkContratacao: 'https://pncp.gov.br/app/editais/40176679000199/2026/42'
+    }), { idContratacaoPNCP: '40176679000199-1-42/2026' });
+    assert.equal(api.getProposalKey({
+      idContratacaoPNCP: 'invalid',
+      linkContratacao: 'https://pncp.gov.br/app/editais/40176679000199/2026/42'
+    }), 'id:40176679000199-1-42/2026');
+    assert.equal(api.getAnalysisParams({ uasg: '928552', numeroCompra: '1/2026' }), null);
   } finally {
     globalThis.fetch = original;
   }
@@ -145,17 +153,89 @@ test('normalizes the PNCP instrument type and purchase number', async () => {
       anoCompra: 2026,
       tipoInstrumentoConvocatorio: 2
     }]);
-    const [withoutTypeName] = (await api.fetchResultados()).resultados;
-    assert.equal(withoutTypeName.tipoInstrumentoConvocatorio, null);
-    assert.equal(withoutTypeName.numeroCompra, '46/2026');
+    const [directPurchaseNotice] = (await api.fetchResultados()).resultados;
+    assert.equal(directPurchaseNotice.tipoInstrumentoConvocatorio, 'Aviso de Contratação Direta');
+    assert.equal(directPurchaseNotice.numeroCompra, '46/2026');
 
     globalThis.fetch = async () => Response.json([{
       tipoSaida: 'oportunidade',
-      tipo: 'Aviso de Contratação Direta',
+      tipoInstrumentoConvocatorioCodigo: 1,
       numeroCompra: '47/2026'
+    }]);
+    const [noticeFromCode] = (await api.fetchResultados()).resultados;
+    assert.equal(noticeFromCode.tipoInstrumentoConvocatorio, 'Edital');
+
+    globalThis.fetch = async () => Response.json([{
+      tipoSaida: 'oportunidade',
+      tipoInstrumentoConvocatorio: '2',
+      numeroCompra: '48/2026'
     }]);
     const [otherType] = (await api.fetchResultados()).resultados;
     assert.equal(otherType.tipoInstrumentoConvocatorio, 'Aviso de Contratação Direta');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('search workflow preserves the instrument type through to the frontend', async () => {
+  const workflow = JSON.parse(readFileSync(
+    new URL('../../workflows/PNCP - Pesquisa.json', import.meta.url), 'utf8'
+  ));
+  const code = workflow.nodes.find(node => node.name === 'Preparar resultado').parameters.jsCode;
+  const prepare = new Function('$json', '$', code);
+  const original = globalThis.fetch;
+  try {
+    for (const fields of [
+      { tipoInstrumentoConvocatorioNome: 'Aviso de Contratação Direta' },
+      { tipoInstrumentoConvocatorio: 2 },
+      { tipoInstrumentoConvocatorioCodigo: 2 },
+      { tipoInstrumentoConvocatorioId: 2 }
+    ]) {
+      const output = prepare({
+        oportunidades: [{ numeroCompra: '400', anoCompra: 2026, ...fields }]
+      }, () => ({ first: () => ({ json: { config: { iniciadoEmMs: Date.now() } } }) }));
+      globalThis.fetch = async () => Response.json(output.map(item => item.json));
+      const [result] = (await api.fetchResultados()).resultados;
+      assert.equal(result.tipoInstrumentoConvocatorio, 'Aviso de Contratação Direta');
+      assert.equal(result.numeroCompra, '400/2026');
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('normalizes all official PNCP instrument types and preserves supplied names', async () => {
+  const original = globalThis.fetch;
+  const types = [
+    [1, 'Edital'],
+    [2, 'Aviso de Contratação Direta'],
+    [3, 'Ato que autoriza a Contratação Direta'],
+    [4, 'Edital de Chamamento Público'],
+    [5, 'Não se Aplica']
+  ];
+  try {
+    for (const [id, nome] of types) {
+      for (const fields of [
+        { tipoInstrumentoConvocatorio: id },
+        { tipoInstrumentoConvocatorio: String(id) },
+        { tipoInstrumentoConvocatorioCodigo: id },
+        { tipoInstrumentoConvocatorioId: id },
+        { tipoInstrumentoConvocatorio: { id } }
+      ]) {
+        globalThis.fetch = async () => Response.json([{
+          tipoSaida: 'oportunidade', numeroCompra: '400/2026', ...fields
+        }]);
+        const [result] = (await api.fetchResultados()).resultados;
+        assert.equal(result.tipoInstrumentoConvocatorio, nome);
+      }
+    }
+    globalThis.fetch = async () => Response.json([{
+      tipoSaida: 'oportunidade',
+      tipoInstrumentoConvocatorioCodigo: 99,
+      tipoInstrumentoConvocatorioNome: 'Novo tipo informado pelo PNCP'
+    }]);
+    const [named] = (await api.fetchResultados()).resultados;
+    assert.equal(named.tipoInstrumentoConvocatorio, 'Novo tipo informado pelo PNCP');
   } finally {
     globalThis.fetch = original;
   }

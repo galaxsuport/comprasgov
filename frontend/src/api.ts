@@ -99,6 +99,8 @@ export async function saveTerms(kind: TermKind, terms: string[]): Promise<string
 }
 
 export function getProposalKey(result: OportunidadeResultado): string | null {
+  const analysisParams = getAnalysisParams(result);
+  if (analysisParams) return `id:${analysisParams.idContratacaoPNCP}`;
   if (result.idContratacaoPNCP) return `id:${result.idContratacaoPNCP}`;
   if (result.linkContratacao) return `link:${result.linkContratacao}`;
   return null;
@@ -225,18 +227,26 @@ export interface AnalysisJob {
   completedAt: number | null;
 }
 
-export function getAnalysisParams(result: OportunidadeResultado): { uasg: string; numeroCompra: string } | null {
-  const code = [result.cadastroProposta, result.linkSistemaOrigem]
-    .map(value => value?.match(/compra=(\d{6})(\d{2})(\d{5})(\d{4})(?:\D|$)/)).find(Boolean);
-  const uasg = result.uasg ?? result.unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? code?.[1];
-  const rawNumeroCompra = result.numeroCompra?.trim();
-  const numeroCompra = rawNumeroCompra?.includes('/')
-    ? rawNumeroCompra
-    : code
-      ? `${Number(rawNumeroCompra || code[3])}/${code[4]}`
-      : rawNumeroCompra ?? null;
-  return uasg && numeroCompra && /^\d{4,8}$/.test(uasg) && /^\d+\/\d{4}$/.test(numeroCompra)
-    ? { uasg, numeroCompra } : null;
+export function getAnalysisParams(result: OportunidadeResultado): { idContratacaoPNCP: string } | null {
+  const id = result.idContratacaoPNCP?.trim();
+  const idParts = id && /^(\d{14})-1-(\d+)\/(\d{4})$/.exec(id);
+  if (idParts && Number.isSafeInteger(Number(idParts[2])) && Number(idParts[2]) > 0) {
+    return { idContratacaoPNCP: id };
+  }
+
+  if (!result.linkContratacao) return null;
+  try {
+    const link = new URL(result.linkContratacao);
+    const match = link.hostname === 'pncp.gov.br'
+      ? link.pathname.match(/^\/app\/editais\/(\d{14})\/(\d{4})\/(\d+)\/?$/)
+      : null;
+    if (match && Number.isSafeInteger(Number(match[3])) && Number(match[3]) > 0) {
+      return { idContratacaoPNCP: `${match[1]}-1-${match[3]}/${match[2]}` };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function fetchAnalyses(signal?: AbortSignal): Promise<AnalysisJob[]> {
@@ -287,6 +297,16 @@ export class WebhookPopupError extends Error {
   }
 }
 
+// Aceita "59/2026" ou "592026" (últimos 4 dígitos = ano) e devolve "59/2026".
+export function normalizeNumeroCompra(value: string): string {
+  const trimmed = value.trim();
+  const withSlash = /^(\d+)\s*\/\s*(\d{4})$/.exec(trimmed);
+  if (withSlash) return `${withSlash[1]}/${withSlash[2]}`;
+  const digitsOnly = /^(\d+)((?:19|20)\d{2})$/.exec(trimmed);
+  if (digitsOnly) return `${digitsOnly[1]}/${digitsOnly[2]}`;
+  return trimmed;
+}
+
 function buildApiUrl(filters: FetchFilters = {}): string {
   const baseUrl = API_BASE_URL;
   const params = new URLSearchParams();
@@ -296,8 +316,9 @@ function buildApiUrl(filters: FetchFilters = {}): string {
   } else if (filters.ufs && filters.ufs !== 'todas') {
     params.set('ufs', filters.ufs);
   }
-  if (filters.numeroCompra) {
-    params.set('numeroCompra', filters.numeroCompra);
+  const numeroCompra = filters.numeroCompra ? normalizeNumeroCompra(filters.numeroCompra) : '';
+  if (numeroCompra) {
+    params.set('numeroCompra', numeroCompra);
   }
   // Quando "todas" é selecionado, não enviamos o parâmetro ufs
   // para que o webhook retorne todas as UFs por padrão
@@ -311,6 +332,30 @@ function buildNumeroCompra(item: Record<string, unknown>) {
   if (!numero) return null;
   const ano = toString(item.anoCompra);
   return numero.includes('/') || !ano ? numero : `${numero}/${ano}`;
+}
+
+function buildTipoInstrumentoConvocatorio(item: Record<string, unknown>) {
+  const tipo = item.tipoInstrumentoConvocatorio;
+  const nome = toString(item.tipoInstrumentoConvocatorioNome
+    ?? (typeof tipo === 'string' ? tipo : null)
+    ?? (tipo && typeof tipo === 'object' && !Array.isArray(tipo)
+      ? (tipo as Record<string, unknown>).nome ?? (tipo as Record<string, unknown>).descricao
+      : null)
+    ?? item.tipoEdital
+    ?? item.tipo);
+  if (nome && !/^\d+$/.test(nome)) return nome;
+
+  const codigo = Number(nome ?? item.tipoInstrumentoConvocatorioCodigo
+    ?? item.tipoInstrumentoConvocatorioId
+    ?? (tipo && typeof tipo === 'object' && !Array.isArray(tipo)
+      ? (tipo as Record<string, unknown>).codigo ?? (tipo as Record<string, unknown>).id
+      : tipo));
+  if (codigo === 1) return 'Edital';
+  if (codigo === 2) return 'Aviso de Contratação Direta';
+  if (codigo === 3) return 'Ato que autoriza a Contratação Direta';
+  if (codigo === 4) return 'Edital de Chamamento Público';
+  if (codigo === 5) return 'Não se Aplica';
+  return null;
 }
 
 function buildLink(item: Record<string, unknown>) {
@@ -453,12 +498,7 @@ function normalizeRecord(item: Record<string, unknown>): PregaoResultado {
     orgao: toString(item.orgao ?? orgaoEntidade.razaoSocial ?? unidadeOrgao.nomeUnidade),
     unidadeCompradora,
     uasg: codigoUnidade ?? unidadeCompradora?.match(/^(\d{4,8}) - /)?.[1] ?? null,
-    tipoInstrumentoConvocatorio: toString(
-      item.tipoInstrumentoConvocatorioNome
-        ?? (typeof item.tipoInstrumentoConvocatorio === 'string' ? item.tipoInstrumentoConvocatorio : null)
-        ?? item.tipoEdital
-        ?? item.tipo
-    ),
+    tipoInstrumentoConvocatorio: buildTipoInstrumentoConvocatorio(item),
     numeroCompra: buildNumeroCompra(item),
     codigoModalidade: typeof item.codigoModalidade === 'number' ? item.codigoModalidade : typeof item.codigoModalidadeConsulta === 'number' ? item.codigoModalidadeConsulta : null,
     modalidadeIdPncp: typeof item.modalidadeIdPncp === 'number' ? item.modalidadeIdPncp : typeof item.modalidadeId === 'number' ? item.modalidadeId : null,

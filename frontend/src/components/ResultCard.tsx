@@ -93,9 +93,13 @@ export default function ResultCard({
 
   const unidadeCompradora = result.unidadeCompradora;
   const tipoInstrumentoConvocatorio = result.tipoInstrumentoConvocatorio;
-  const numeroCompra = result.numeroCompra;
+  const rawNumeroCompra = result.numeroCompra?.trim();
+  const anoCompra = result.idContratacaoPNCP?.match(/\/(\d{4})$/)?.[1];
+  const numeroCompra = rawNumeroCompra && !rawNumeroCompra.includes('/') && anoCompra
+    ? `${rawNumeroCompra}/${anoCompra}`
+    : rawNumeroCompra;
   const edital = numeroCompra
-    ? `${tipoInstrumentoConvocatorio ? `${tipoInstrumentoConvocatorio} ` : ''}Nº ${numeroCompra}`
+    ? `${tipoInstrumentoConvocatorio ? `${tipoInstrumentoConvocatorio} ` : ''}nº ${numeroCompra}`
     : null;
   const situacao = result.situacao;
   const suspended = situacao?.trim().toLocaleLowerCase('pt-BR') === 'suspensa';
@@ -234,9 +238,9 @@ export default function ResultCard({
             type="button"
             className={`discard-toggle${!analysisRunning && !analysisCancelling ? analysisFinished ? ' reanalyze-btn' : ' analyze-btn' : ''}`}
             onClick={() => analysisRunning ? onCancelAnalysis?.(result) : onAnalyze(result)}
-            disabled={isDiscarded || analysisCancelling || (analysisRunning ? !onCancelAnalysis : !getAnalysisParams(result))}
+            disabled={isDiscarded || analysisCancelling || (analysisRunning && !onCancelAnalysis)}
             title={analysisRunning ? 'Cancelar análise e excluir os dados gerados'
-              : !getAnalysisParams(result) ? 'UASG ou número da compra indisponível'
+              : !getAnalysisParams(result) ? 'Id contratação PNCP indisponível'
               : analysisFinished ? 'Iniciar uma nova análise' : 'Analisar edital'}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">

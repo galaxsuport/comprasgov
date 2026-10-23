@@ -17,7 +17,7 @@ test('starts analyses directly, resumes progress and replaces reports only after
     if (req.url === '/start') {
       let text = '';
       for await (const chunk of req) text += chunk;
-      assert.deepEqual(JSON.parse(text), { UASG: '985825', numeroCompra: '326/2027' });
+      assert.deepEqual(JSON.parse(text), { idContratacaoPNCP: '40176679000199-1-326/2027' });
       await new Promise(resolve => setTimeout(resolve, 20));
       if (failStart) { res.writeHead(503); res.end(); return; }
       starts++;
@@ -46,7 +46,7 @@ test('starts analyses directly, resumes progress and replaces reports only after
   });
   await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${api.address().port}`;
-  const proposal = { tipoSaida: 'oportunidade', idContratacaoPNCP: 'fixture', uasg: '985825', numeroCompra: '326/2027' };
+  const proposal = { tipoSaida: 'oportunidade', idContratacaoPNCP: '40176679000199-1-326/2027', uasg: '985825', numeroCompra: '326/2027' };
   try {
     assert.equal((await fetch(`${base}/api/analysis`)).status, 401);
     const login = await fetch(`${base}/api/auth/login`, {
@@ -60,11 +60,14 @@ test('starts analyses directly, resumes progress and replaces reports only after
       method: 'POST', headers: { ...headers, 'Sec-Fetch-Site': 'cross-site' }, body: JSON.stringify({ proposal })
     })).status, 403);
     assert.equal((await fetch(`${base}/api/analysis`, { method: 'POST', headers, body: '{}' })).status, 400);
+    assert.equal((await fetch(`${base}/api/analysis`, {
+      method: 'POST', headers, body: JSON.stringify({ proposal: { ...proposal, idContratacaoPNCP: 'invalid' } })
+    })).status, 400);
     const simultaneous = await Promise.all([start(), start()]);
     assert.deepEqual(simultaneous.map(r => r.status).sort(), [200, 409]);
     assert.equal(starts, 1);
     const initial = await simultaneous.find(r => r.status === 200).json();
-    assert.equal(initial.proposalKey, 'id:fixture');
+    assert.equal(initial.proposalKey, 'id:40176679000199-1-326/2027');
     assert.equal(initial.hasReport, false);
     assert.equal((await (await start()).json()).jobId, initial.jobId);
     assert.equal(starts, 1);
